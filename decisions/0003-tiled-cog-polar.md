@@ -29,7 +29,7 @@ over the pole it needs the unmerged mesh fix from decision 0001.
 ## Evidence
 
 The code, screenshots and numbers are in
-[allboa/spikes `tiled-cog-polar/`](https://github.com/allboa/spikes/tree/spike-tiled-cog-polar/tiled-cog-polar)
+[allboa/spikes `tiled-cog-polar/`](https://github.com/allboa/spikes/tree/main/tiled-cog-polar)
 (PR [allboa/spikes#7](https://github.com/allboa/spikes/pull/7)). There are two
 test COGs, each with five levels, 256 x 256 DEFLATE tiles, and a synthetic
 field with seam markers. One is in EPSG:3031 (2560 x 2560, 5 km). The other is
@@ -45,18 +45,21 @@ was rendered in headless Chromium with SwiftShader, in a deck.gl 9.4
   tile.
   - For the 3031 COG, the presets drew levels 3, 1, 0 and 0, with 4, 25, 12
     and 4 tiles
-    ([far](https://github.com/allboa/spikes/blob/spike-tiled-cog-polar/tiled-cog-polar/screenshots/a_3031_far.png),
-    [all](https://github.com/allboa/spikes/blob/spike-tiled-cog-polar/tiled-cog-polar/screenshots/a_3031_all.png),
-    [pole](https://github.com/allboa/spikes/blob/spike-tiled-cog-polar/tiled-cog-polar/screenshots/a_3031_pole.png)).
+    ([far](https://github.com/allboa/spikes/blob/main/tiled-cog-polar/screenshots/a_3031_far.png),
+    [all](https://github.com/allboa/spikes/blob/main/tiled-cog-polar/screenshots/a_3031_all.png),
+    [pole](https://github.com/allboa/spikes/blob/main/tiled-cog-polar/screenshots/a_3031_pole.png)).
   - One page session zoomed with the mouse wheel re-planned through levels
     3, 2, 1, 1 and 0
-    ([step 4](https://github.com/allboa/spikes/blob/spike-tiled-cog-polar/tiled-cog-polar/screenshots/a_3031_wheel_4.png)).
+    ([step 4](https://github.com/allboa/spikes/blob/main/tiled-cog-polar/screenshots/a_3031_wheel_4.png)).
   - The lon/lat COG drew at levels 2 and 0. Its 15 pole-row tiles meet
     cleanly at the pole, and the image edge at 180 shows no seam
-    ([pole](https://github.com/allboa/spikes/blob/spike-tiled-cog-polar/tiled-cog-polar/screenshots/a_4326_pole.png),
-    [antimeridian](https://github.com/allboa/spikes/blob/spike-tiled-cog-polar/tiled-cog-polar/screenshots/a_4326_antimeridian.png)).
+    ([pole](https://github.com/allboa/spikes/blob/main/tiled-cog-polar/screenshots/a_4326_pole.png),
+    [antimeridian](https://github.com/allboa/spikes/blob/main/tiled-cog-polar/screenshots/a_4326_antimeridian.png)).
   - Plans took 2 to 28 ms. A plan is 1 to 8 KiB of JSON for the 3031 COG and
     up to 374 KiB for lon/lat, whose curved meshes use 2-degree cells.
+  - Tiles are culled by the bounding box of their projected footprint,
+    which is loose at the pole: the antimeridian view fetches 8 tiles where
+    fewer would do.
   - All three pieces were written for the spike: the planner is about 130
     lines, the transport about 80 and the browser side about 160.
 - **Browser traversal, prototyped.** It keeps deck.gl-raster 0.8.1's
@@ -67,12 +70,12 @@ was rendered in headless Chromium with SwiftShader, in a deck.gl 9.4
   130 lines.
   - In every preset run with both approaches, it picks the same level and
     number of tiles as the planner
-    ([3031 all](https://github.com/allboa/spikes/blob/spike-tiled-cog-polar/tiled-cog-polar/screenshots/b_3031_all.png)).
+    ([3031 all](https://github.com/allboa/spikes/blob/main/tiled-cog-polar/screenshots/b_3031_all.png)).
   - The lon/lat COG draws with gaps along the pole-row tile edges and 16 mesh
     non-convergence warnings
-    ([stock](https://github.com/allboa/spikes/blob/spike-tiled-cog-polar/tiled-cog-polar/screenshots/b_4326_all_stock.png)).
+    ([stock](https://github.com/allboa/spikes/blob/main/tiled-cog-polar/screenshots/b_4326_all_stock.png)).
     It is clean only with decision 0001's forward error metric patched in
-    ([forward](https://github.com/allboa/spikes/blob/spike-tiled-cog-polar/tiled-cog-polar/screenshots/b_4326_all_forward.png)).
+    ([forward](https://github.com/allboa/spikes/blob/main/tiled-cog-polar/screenshots/b_4326_all_forward.png)).
   - Two Mercator assumptions surfaced along the way. First, deck.gl
     `TileLayer` culls sub-layers against a lon/lat `tile.bbox`, which culls
     every tile in an orthographic view. Second, `TileLayer` hides everything
@@ -102,7 +105,8 @@ views, where a plan tied to one view CRS does not fit.
 
 If R-planned tiles are accepted:
 
-- **Scene spec.** A tiled raster layer references the COG by URL and carries
+- **Scene spec.** Scene spec 0.1 has none of this yet; it is a follow-up
+  issue in allboa/scenespec. A tiled raster layer references the COG by URL and carries
   a tile plan: level, tile byte ranges, and per-tile meshes in the view CRS
   with UVs. The plan is data, not renderer props, so the spec stays
   renderer-neutral. The meshes should travel as Arrow buffers (float32
