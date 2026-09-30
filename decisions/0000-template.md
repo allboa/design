@@ -3,6 +3,7 @@
 - Date: YYYY-MM-DD
 - Status: proposed | accepted | superseded by NNNN
 - Issue: allboa/<repo>#<n>
+- Decided by: agent | Michael (gate A, B or C)
 
 ## Question
 

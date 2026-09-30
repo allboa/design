@@ -16,8 +16,8 @@ made since then are in [`decisions/`](decisions/).
 | `design` | Origin record (frozen), decision records, this brief |
 | `scenespec` | Scene spec JSON Schema, fixtures, validator, conformance scenes |
 | `spikes` | Throwaway experiments; each ends in a decision record here |
-| `aobcore` | Lean R core: producers, scene building, transport, bundled renderer (placeholder name) |
-| `aobview` | `view(x)` for sf and terra (placeholder name) |
+| `aobcore` | Lean R core: producers to GeoArrow and grid descriptors, scene building, embed transport, bundled renderer (placeholder name) |
+| `aobview` | `view(x)` for sf and terra, palettes, legends, popups (placeholder name) |
 
 ## Design principles
 
@@ -48,12 +48,14 @@ made since then are in [`decisions/`](decisions/).
    [`decisions/0000-template.md`](decisions/0000-template.md).
 5. Review and merge: every PR is reviewed by a separate agent against the
    charter, the design post and the decision records. When that review
-   passes and CI is green, the agent that opened the PR merges it. Michael
-   is not a required reviewer during the early phases.
+   passes and CI is green, the agent that opened the PR merges it. main is
+   protected and CI must pass. Michael is not a required reviewer (his
+   decision, 2026-09-30, replacing the charter's required-reviewer rule);
+   widening agent merge rights beyond this is gate C.
 6. Stop and ask Michael before anything that changes the plan's goals or
    non-goals, before a gate decision (A: tiled-raster approach, B: proposing
    the scene spec to lonboard, C: widening agent merge rights), and before
    any step that cannot be undone (deleting a repo or branch history,
    posting outside the org, submitting to CRAN).
-7. Agents act through the org's GitHub App. No access to other orgs or
+7. Agents act through the org's GitHub App, installed on this org only. No access to other orgs or
    personal repos.
