@@ -83,7 +83,7 @@ Five routes, all ending in native interleaved GeoArrow IPC in EPSG:3031:
   selects features without cutting them. So until wk has densify and clip
   filters, the current `ogr2ogr` route (a `/vsimem` GeoPackage, `-clipsrc`,
   `-segmentize`, `-t_srs`) is used whenever a clip or densify is needed.
-  This route inherits the per-coordinate limits below, so a lon/lat view
+  The wk route inherits the per-coordinate limits below, so a lon/lat view
   still needs GDAL's own reprojection. The generic stream plus
   `wk_transform_filter()` part matches the spike's `wk_proj_stream` route,
   which ran only on GDAL 3.13.3; neither it nor a densify step has been run
