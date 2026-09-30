@@ -1,4 +1,4 @@
-# 0003: Tiled COGs reach a polar view as R-planned tiles (proposed)
+# 0003: Tiled COGs reach a polar view as R-planned tiles
 
 - Date: 2026-09-30
 - Status: accepted (gate A, Michael, 2026-09-30)
