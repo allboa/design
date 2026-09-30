@@ -1,7 +1,7 @@
 # 0003: Tiled COGs reach a polar view as R-planned tiles (proposed)
 
 - Date: 2026-09-30
-- Status: proposed
+- Status: accepted (gate A, Michael, 2026-09-30)
 - Issue: allboa/spikes#1
 - Decided by: Michael (gate A)
 
