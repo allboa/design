@@ -1,0 +1,319 @@
+<title>Polar View Probe</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: full-height polar map, instrument panel docked right (bottom sheet on phones) */
+:root {
+  --bg: #eef2f4;
+  --panel: #f8fafb;
+  --ink: #1d2a33;
+  --muted: #5b6b76;
+  --rule: #d3dce1;
+  --accent: #1f6f8b;
+  --map: #dfe7eb;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f171c; --panel: #152029; --ink: #e3ebef; --muted: #93a4ae;
+    --rule: #26343e; --accent: #6cc0dd; --map: #0b1216; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f171c; --panel: #152029; --ink: #e3ebef; --muted: #93a4ae;
+  --rule: #26343e; --accent: #6cc0dd; --map: #0b1216; color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body);
+  font-size: 14px; line-height: 1.45;
+}
+.app { display: grid; grid-template-columns: minmax(0, 1fr) 320px; height: 100%; }
+.map { position: relative; background: var(--map); min-width: 0; min-height: 0; overflow: hidden; }
+#deck { position: absolute; inset: 0; }
+.crs-tag {
+  position: absolute; left: 16px; top: 16px; font-family: var(--font-data); font-size: 12px;
+  background: var(--panel); color: var(--ink); border: 1px solid var(--rule);
+  padding: 4px 8px; border-radius: 4px; pointer-events: none;
+}
+.readout {
+  position: absolute; left: 16px; bottom: 16px; font-family: var(--font-data); font-size: 12px;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 6px 10px;
+  display: grid; grid-template-columns: auto auto; gap: 2px 12px; font-variant-numeric: tabular-nums;
+  pointer-events: none; min-width: 190px;
+}
+.readout span:nth-child(odd) { color: var(--muted); }
+aside {
+  background: var(--panel); border-left: 1px solid var(--rule); overflow-y: auto;
+  padding-block: 20px 24px; padding-inline: 20px; display: flex; flex-direction: column; gap: 20px;
+}
+h1 { font-size: 18px; font-weight: 600; margin: 0; text-wrap: balance; }
+.lede { margin: 6px 0 0; color: var(--muted); }
+h2 {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 8px;
+}
+.layers { display: flex; flex-direction: column; gap: 6px; }
+.layers label { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; cursor: pointer; }
+.layers input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+.layers input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layers small { font-family: var(--font-data); color: var(--muted); font-size: 11.5px; }
+.legend-bar { height: 10px; border-radius: 2px; }
+.legend-scale { display: flex; justify-content: space-between; font-family: var(--font-data); font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+.legend-note { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 4px 0; border-bottom: 1px solid var(--rule); }
+th { font-weight: 500; color: var(--muted); font-size: 11.5px; }
+td.num, th.num { text-align: right; font-family: var(--font-data); }
+tfoot td { border-bottom: none; font-weight: 600; }
+.notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--ink); }
+.notes li::marker { color: var(--accent); }
+code { font-family: var(--font-data); font-size: 12px; }
+.status { font-size: 12px; color: var(--muted); }
+.status.error { color: #b3261e; }
+@media (max-width: 760px) {
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: 58vh auto; height: auto; }
+  aside { border-left: none; border-top: 1px solid var(--rule); overflow: visible; }
+}
+</style>
+
+<div class="app">
+  <div class="map">
+    <div id="deck"></div>
+    <div class="crs-tag" id="crs-tag">EPSG:3031</div>
+    <div class="readout" aria-live="off">
+      <span>x</span><span id="ro-x">-</span>
+      <span>y</span><span id="ro-y">-</span>
+      <span>lon</span><span id="ro-lon">-</span>
+      <span>lat</span><span id="ro-lat">-</span>
+    </div>
+  </div>
+  <aside>
+    <header>
+      <h1>Polar view probe</h1>
+      <p class="lede">deck.gl in an orthographic view, drawing projected metres directly. Every layer arrives as Arrow; the browser binds buffers and reprojects nothing.</p>
+    </header>
+    <section>
+      <h2>Layers</h2>
+      <div class="layers" id="layers"></div>
+    </section>
+    <section>
+      <h2>Raster</h2>
+      <div class="legend-bar" id="legend-bar"></div>
+      <div class="legend-scale" id="legend-scale"></div>
+      <p class="legend-note">Synthetic lon/lat field on a 1 degree grid, standing in for OISST. Drawn as a textured mesh whose vertices were projected before shipping; nearest sampling shows the curved cells.</p>
+    </section>
+    <section>
+      <h2>Transfer</h2>
+      <table>
+        <thead><tr><th>Table</th><th class="num">Rows</th><th class="num">KiB</th></tr></thead>
+        <tbody id="xfer"></tbody>
+        <tfoot><tr><td>Total</td><td></td><td class="num" id="xfer-total"></td></tr></tfoot>
+      </table>
+      <p class="status" id="status">Decoding...</p>
+    </section>
+    <section>
+      <h2>What this shows</h2>
+      <ul class="notes">
+        <li>The pole and the antimeridian need no special handling: the mesh lives in source space and every vertex was projected once, upstream.</li>
+        <li>Coastline comes from a line dataset. Land polygons close through the pole, so their rings would draw a false seam along 180 degrees.</li>
+        <li>EPSG:3031 puts the origin at the pole, so float32 offsets stay small here. Other projected CRSs need a <code>coordinateOrigin</code> near the data.</li>
+      </ul>
+    </section>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/apache-arrow@17.0.0/Arrow.es2015.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.15/dist.min.js"></script>
+<script type="application/json" id="bundle">__BUNDLE__</script>
+<script>
+(function () {
+  "use strict";
+  var statusEl = document.getElementById("status");
+  function fail(msg) { statusEl.textContent = msg; statusEl.className = "status error"; }
+  if (!window.Arrow || !window.deck) { fail("Libraries did not load, so the map cannot draw."); return; }
+
+  var bundle = JSON.parse(document.getElementById("bundle").textContent);
+  var scene = bundle.scene;
+  document.getElementById("crs-tag").textContent = scene.crs + " / " + scene.view.type;
+
+  // ---- decode: base64 -> bytes -> Arrow table (no geometry parsing) ----
+  var t0 = performance.now();
+  var tables = {}, sizes = {};
+  Object.keys(bundle.blobs).forEach(function (k) {
+    var s = atob(bundle.blobs[k]), b = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+    sizes[k] = b.length;
+    tables[k] = Arrow.tableFromIPC(b);
+  });
+  var decodeMs = performance.now() - t0;
+
+  function chunk(table, name) { return table.getChild(name).data[0]; }
+  function listChild(d) { return d.children[0]; }
+
+  // geoarrow.linestring: List<FixedSizeList<double,2>>
+  function lineBuffers(table) {
+    var d = chunk(table, "geometry");
+    var n = d.length, offs = d.valueOffsets;
+    var coords = listChild(listChild(d)).values;
+    return { length: n, startIndices: offs.subarray(0, n), coords: coords, vertices: offs[n] - offs[0] };
+  }
+  // geoarrow.polygon: List<List<FixedSizeList<double,2>>>; exterior rings only
+  function polygonBuffers(table) {
+    var d = chunk(table, "geometry");
+    var n = d.length, gOff = d.valueOffsets, rings = listChild(d), rOff = rings.valueOffsets;
+    var coords = listChild(listChild(rings)).values;
+    var starts = new Int32Array(n);
+    for (var i = 0; i < n; i++) starts[i] = rOff[gOff[i]];
+    return { length: n, startIndices: starts, coords: coords, vertices: rOff[gOff[n]] };
+  }
+
+  // ---- palette: data-side colour ramp for the raster ----
+  var ramp = [[8, 29, 88], [37, 52, 148], [34, 94, 168], [29, 145, 192], [65, 182, 196], [127, 205, 187], [199, 233, 180], [237, 248, 177]];
+  function rampColor(t) {
+    t = Math.max(0, Math.min(1, t)) * (ramp.length - 1);
+    var i = Math.min(ramp.length - 2, Math.floor(t)), f = t - i, a = ramp[i], b = ramp[i + 1];
+    return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  }
+
+  var C = deck.COORDINATE_SYSTEM.CARTESIAN;
+  var visible = {};
+  var stats = {};
+  var builders = {};
+
+  scene.layers.forEach(function (L) {
+    visible[L.id] = true;
+    if (L.type === "raster-mesh") {
+      var pos = chunk(tables[L.mesh], "position"), uv = chunk(tables[L.mesh], "uv");
+      var idx = chunk(tables[L.indices], "index").values;
+      var vals = chunk(tables[L.values], "value").values;
+      var nx = L.grid.dim[0], ny = L.grid.dim[1], lo = L.palette.range[0], hi = L.palette.range[1];
+      var canvas = document.createElement("canvas");
+      canvas.width = nx; canvas.height = ny;
+      var ctx = canvas.getContext("2d"), img = ctx.createImageData(nx, ny);
+      for (var p = 0; p < vals.length; p++) {
+        var c = rampColor((vals[p] - lo) / (hi - lo));
+        img.data[p * 4] = c[0]; img.data[p * 4 + 1] = c[1]; img.data[p * 4 + 2] = c[2]; img.data[p * 4 + 3] = 255;
+      }
+      ctx.putImageData(img, 0, 0);
+      var mesh = {
+        attributes: {
+          positions: { value: listChild(pos).values, size: 3 },
+          texCoords: { value: listChild(uv).values, size: 2 }
+        },
+        indices: { value: idx, size: 1 }
+      };
+      stats[L.id] = (idx.length / 3).toLocaleString() + " tris";
+      builders[L.id] = function () {
+        return new deck.SimpleMeshLayer({
+          id: L.id, data: [0], mesh: mesh, texture: canvas, coordinateSystem: C,
+          getPosition: [0, 0, 0], getColor: [255, 255, 255, 255], sizeScale: 1,
+          material: false,
+          textureParameters: { minFilter: "nearest", magFilter: "nearest", mipmapFilter: "none" }
+        });
+      };
+      // legend
+      var stops = [];
+      for (var s = 0; s <= 10; s++) { var cc = rampColor(s / 10); stops.push("rgb(" + cc.map(Math.round).join(",") + ") " + (s * 10) + "%"); }
+      document.getElementById("legend-bar").style.background = "linear-gradient(90deg," + stops.join(",") + ")";
+      document.getElementById("legend-scale").innerHTML = "<span>" + lo + "</span><span>" + ((lo + hi) / 2).toFixed(1) + "</span><span>" + hi + " deg C</span>";
+    } else if (L.type === "polygon") {
+      var pb = polygonBuffers(tables[L.data]);
+      stats[L.id] = pb.length + " polygons";
+      builders[L.id] = function () {
+        return new deck.SolidPolygonLayer({
+          id: L.id, coordinateSystem: C, _normalize: false, positionFormat: "XY",
+          data: { length: pb.length, startIndices: pb.startIndices, attributes: { getPolygon: { value: pb.coords, size: 2 } } },
+          getFillColor: L.fill
+        });
+      };
+    } else if (L.type === "path") {
+      var lb = lineBuffers(tables[L.data]);
+      var colorFn = L.color;
+      if (L.color && L.color.column) {
+        var cvals = listChild(chunk(tables[L.data], L.color.column)).values;
+        colorFn = function (_, info) { var i = info.index * 4; return [cvals[i], cvals[i + 1], cvals[i + 2], cvals[i + 3]]; };
+      }
+      stats[L.id] = lb.length + " lines";
+      builders[L.id] = function () {
+        return new deck.PathLayer({
+          id: L.id, coordinateSystem: C, _pathType: "open", positionFormat: "XY",
+          data: { length: lb.length, startIndices: lb.startIndices, attributes: { getPath: { value: lb.coords, size: 2 } } },
+          getColor: colorFn, getWidth: L.width_px, widthUnits: "pixels"
+        });
+      };
+    }
+  });
+
+  // ---- layer toggles ----
+  var box = document.getElementById("layers");
+  scene.layers.slice().reverse().forEach(function (L) {
+    var lab = document.createElement("label");
+    lab.innerHTML = '<input type="checkbox" id="layer-' + L.id + '" checked><span></span><small></small>';
+    lab.querySelector("span").textContent = L.label;
+    lab.querySelector("small").textContent = stats[L.id];
+    lab.querySelector("input").addEventListener("change", function (e) { visible[L.id] = e.target.checked; render(); });
+    box.appendChild(lab);
+  });
+
+  // ---- transfer table ----
+  var rowsOf = { land: tables.land.numRows, coast: tables.coast.numRows, graticule: tables.graticule.numRows,
+    sst_mesh: tables.sst_mesh.numRows, sst_index: tables.sst_index.numRows, sst_values: tables.sst_values.numRows };
+  var tb = document.getElementById("xfer"), total = 0;
+  Object.keys(sizes).forEach(function (k) {
+    total += sizes[k];
+    var tr = document.createElement("tr");
+    tr.innerHTML = "<td></td><td class='num'></td><td class='num'></td>";
+    tr.children[0].textContent = k;
+    tr.children[1].textContent = rowsOf[k].toLocaleString();
+    tr.children[2].textContent = (sizes[k] / 1024).toFixed(0);
+    tb.appendChild(tr);
+  });
+  document.getElementById("xfer-total").textContent = (total / 1024).toFixed(0);
+  statusEl.textContent = "Arrow IPC decoded in " + decodeMs.toFixed(1) + " ms (base64 included). Geometry is used as decoded, with no parse step.";
+
+  // ---- inverse EPSG:3031 for the readout (validated against PROJ) ----
+  function inv3031(x, y) {
+    var a = 6378137, f = 1 / 298.257223563, e2 = f * (2 - f), e = Math.sqrt(e2), phic = 71 * Math.PI / 180;
+    var X = -x, Y = -y, rho = Math.hypot(X, Y);
+    if (rho === 0) return [0, -90];
+    var s = Math.sin(phic), mc = Math.cos(phic) / Math.sqrt(1 - e2 * s * s);
+    var tc = Math.tan(Math.PI / 4 - phic / 2) / Math.pow((1 - e * s) / (1 + e * s), e / 2);
+    var chi = Math.PI / 2 - 2 * Math.atan(rho * tc / (a * mc));
+    var e4 = e2 * e2, e6 = e4 * e2, e8 = e4 * e4;
+    var phi = chi + (e2 / 2 + 5 * e4 / 24 + e6 / 12 + 13 * e8 / 360) * Math.sin(2 * chi)
+      + (7 * e4 / 48 + 29 * e6 / 240 + 811 * e8 / 11520) * Math.sin(4 * chi)
+      + (7 * e6 / 120 + 81 * e8 / 1120) * Math.sin(6 * chi) + (4279 * e8 / 161280) * Math.sin(8 * chi);
+    return [-Math.atan2(X, -Y) * 180 / Math.PI, -phi * 180 / Math.PI];
+  }
+  var ro = { x: document.getElementById("ro-x"), y: document.getElementById("ro-y"), lon: document.getElementById("ro-lon"), lat: document.getElementById("ro-lat") };
+  function fmtM(v) { return (v / 1000).toFixed(1) + " km"; }
+
+  // ---- view ----
+  var host = document.getElementById("deck");
+  function fitZoom() {
+    var w = host.clientWidth || 800, h = host.clientHeight || 600;
+    return Math.log2(Math.min(w, h) * 0.95 / scene.view.extent_m);
+  }
+  var viewState = { target: [scene.view.center[0], scene.view.center[1], 0], zoom: fitZoom(), minZoom: fitZoom() - 2, maxZoom: fitZoom() + 9 };
+
+  var dg = new deck.Deck({
+    parent: host,
+    views: new deck.OrthographicView({ id: "polar", flipY: false, controller: true }),
+    initialViewState: viewState,
+    layers: [],
+    onHover: function (info) {
+      if (!info.coordinate) { ro.x.textContent = ro.y.textContent = ro.lon.textContent = ro.lat.textContent = "-"; return; }
+      var x = info.coordinate[0], y = info.coordinate[1], ll = inv3031(x, y);
+      ro.x.textContent = fmtM(x); ro.y.textContent = fmtM(y);
+      ro.lon.textContent = ll[0].toFixed(2); ro.lat.textContent = ll[1].toFixed(2);
+    },
+    onError: function (err) { fail("Rendering error: " + (err && err.message ? err.message : err)); }
+  });
+  function render() {
+    dg.setProps({ layers: scene.layers.filter(function (L) { return visible[L.id]; }).map(function (L) { return builders[L.id](); }) });
+  }
+  render();
+  window.__probe = { deck: dg, decodeMs: decodeMs };
+})();
+</script>
