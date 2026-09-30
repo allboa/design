@@ -3,6 +3,7 @@
 - Date: 2026-09-30
 - Status: proposed
 - Issue: allboa/spikes#2
+- Decided by: agent
 
 ## Question
 
@@ -13,7 +14,9 @@ between?
 
 ## Answer
 
-Yes, when the layer GDAL streams from is stored as GeoArrow. GDAL's generic
+Not as asked, for non-Arrow sources: they need one in-memory GDAL write to
+the Arrow driver, then the stream is native GeoArrow. Arrow-stored layers
+stream native GeoArrow directly. GDAL's generic
 Arrow stream, which serves every driver without a native Arrow reader, emits
 only WKB, and no stream option changes that. So the producer has two steps.
 First, GDAL writes the layer to its Arrow driver in `/vsimem` with
@@ -72,7 +75,8 @@ wk 0.9.5, all from conda-forge.
 - The core's vector producer is `ogr2ogr()` to `/vsimem` with the Arrow
   driver and `GEOMETRY_ENCODING=GEOARROW_INTERLEAVED`, then
   `getArrowStream()`, then `write_nanoarrow()`. Clip, densify and reproject
-  happen in the same GDAL call, which fits "curvature is one sampling
+  happen in the same GDAL call, with `-t_srs` set to the scene's view CRS
+  (scene spec 0.1 requires vector coordinates in the view CRS), which fits "curvature is one sampling
   decision". gdalraster stays in Suggests. The geoarrow conversion is the
   fallback, and it keeps the core's Imports at nanoarrow, geoarrow, wk and
   htmltools.
