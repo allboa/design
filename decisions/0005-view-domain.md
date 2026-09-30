@@ -1,7 +1,7 @@
 # 0005: A default view domain from the projection's centre
 
 - Date: 2026-09-30
-- Status: proposed (open choices below are Michael's)
+- Status: accepted
 - Issue: none yet; raised by Michael in the project thread on CRS input
 - Decided by: Michael
 
@@ -14,7 +14,7 @@ horizon. How should a scene get a sensible default view and a limit on
 panning and zooming out (a "distance across the canvas" in CRS units), while
 still letting data stream in from outside that view?
 
-## Answer (proposed)
+## Answer
 
 Compute a **domain** for the view CRS from its centre: walk outward from the
 projection centre along many bearings and stop, on each bearing, at the
@@ -96,7 +96,7 @@ Radial stretch alone is what makes LAEA "bounded": its stretch across the
 bearing does grow toward the antipode, but it only squeezes the outer ring
 of the disc, it does not push the edge outward.
 
-## Open choices (Michael)
+## Choices (decided by Michael, 2026-09-30)
 
 1. **`k`**: 2 (3031 to the equator, Mercator to 60 degrees) or 4 (3031 to
    about 30N, Mercator to 75 degrees). Proposed: 2.
@@ -116,6 +116,12 @@ of the disc, it does not push the edge outward.
 5. **Spec shape**: `view.bounds` as a plain extent (proposed), or a
    polygon so the clamp can follow the star-shaped domain (a disc for LAEA)
    rather than its bounding box.
+
+Michael took the proposed option on all five: `k = 2`; the default view is
+the data footprint clipped to the domain (the domain when there is no
+data); the clamp is on by default with a quarter-width margin; data outside
+the domain still loads; and `view.bounds` is a plain extent (scene spec
+0.4, allboa/scenespec).
 
 ## Consequences
 
