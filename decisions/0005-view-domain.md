@@ -2,7 +2,7 @@
 
 - Date: 2026-09-30
 - Status: accepted
-- Issue: none yet; raised by Michael in the project thread on CRS input
+- Issue: none; raised by Michael in the project thread on CRS input, implemented in allboa/scenespec#7 (0.4 `view.bounds`) and aobcore
 - Decided by: Michael
 
 ## Question
@@ -36,7 +36,7 @@ rules (`cog_plan()`'s `max_stretch`, clip boxes), so data outside the
 default view still loads when the camera goes there. Clipping data to the
 domain is available only when asked for.
 
-## How it would look
+## How it looks
 
 In R (aobcore), with names open to change:
 
@@ -68,8 +68,8 @@ stretch rule does not apply; its domain is `[-180, 180] x [-90, 90]`.
 
 ## Evidence
 
-Measured with gdalraster (GDAL 3.13.3, PROJ 9.9.0) on 72 bearings in
-0.5 degree steps, WGS84. Radial stretch is the projected length of each
+Measured with gdalraster (GDAL 3.13.3, PROJ 9.9.0) on 72 bearings (5
+degrees apart), walking each in 0.5 degree steps, WGS84. Radial stretch is the projected length of each
 0.5 degree step divided by its length on a sphere of radius R. Half widths
 are in thousands of km (1e6 m); "reach" is the angular distance from the
 centre where the walk stopped (min and max over bearings).
@@ -131,5 +131,5 @@ the domain still loads; and `view.bounds` is a plain extent (scene spec
 - scenespec 0.4 adds optional `view.bounds`; no existing scene changes.
 - `cog_plan()`'s `max_stretch` stays as the data-side rule. A later record
   may let the domain replace it for tile culling, since both measure the
-  same stretch, but that is not part of this proposal.
+  same stretch, but that is not part of this decision.
 - Rules out clipping data to the default view by default.
