@@ -29,7 +29,7 @@ R.
 ## Evidence
 
 The code, screenshots and full output are in
-[allboa/spikes `gdalraster-geoarrow/`](https://github.com/allboa/spikes/tree/spike-gdalraster-geoarrow/gdalraster-geoarrow)
+[allboa/spikes `gdalraster-geoarrow/`](https://github.com/allboa/spikes/tree/main/gdalraster-geoarrow)
 (PR allboa/spikes#5). The test layer is the Natural Earth 50m coastline,
 clipped south of 40S and drawn in EPSG:3031. Versions: R 4.5.3, GDAL 3.13.3,
 libarrow 25.0.0, gdalraster 2.7.0, nanoarrow 0.8.0.1, geoarrow 0.4.4 and
@@ -52,7 +52,7 @@ wk 0.9.5, all from conda-forge.
   `FixedSizeList[2]` vertices. deck.gl binds the `Float64Array` to a
   `PathLayer` in an `OrthographicView` and draws 170 lines and 9,887
   vertices
-  ([screenshot](https://github.com/allboa/spikes/blob/spike-gdalraster-geoarrow/gdalraster-geoarrow/screenshot.png)).
+  ([screenshot](https://github.com/allboa/spikes/blob/main/gdalraster-geoarrow/screenshot.png)).
 - **R fallback.**
   `geoarrow::as_geoarrow_vctr(wkb, schema = geoarrow_multilinestring(coord_type = "INTERLEAVED"))`
   on the WKB stream, then `write_nanoarrow()`, gives native interleaved

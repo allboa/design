@@ -24,7 +24,7 @@ proposing upstream.
 ## Evidence
 
 The code, screenshots and numbers are in
-[allboa/spikes `rasterlayer-3031/`](https://github.com/allboa/spikes/tree/spike-rasterlayer-3031/rasterlayer-3031)
+[allboa/spikes `rasterlayer-3031/`](https://github.com/allboa/spikes/tree/main/rasterlayer-3031)
 (PR [allboa/spikes#6](https://github.com/allboa/spikes/pull/6)). Versions:
 `@developmentseed/deck.gl-raster` 0.8.1, `@developmentseed/geotiff` 0.8.1,
 deck.gl 9.4, and proj4 2.22. Everything was bundled locally with esbuild and
@@ -36,15 +36,15 @@ seams show.
 - **EPSG:3031 COG, stock layer.** 2560 x 2560, 5 km cells, a +-6.4e6 m square
   over the pole. The reprojection is the identity, and the mesh is 4 vertices
   and 2 triangles. It draws, and so do the pole and the antimeridian
-  ([full](https://github.com/allboa/spikes/blob/spike-rasterlayer-3031/rasterlayer-3031/screenshots/stock_3031.png),
-  [pole](https://github.com/allboa/spikes/blob/spike-rasterlayer-3031/rasterlayer-3031/screenshots/stock_3031_pole.png),
-  [antimeridian](https://github.com/allboa/spikes/blob/spike-rasterlayer-3031/rasterlayer-3031/screenshots/stock_3031_antimeridian.png)).
+  ([full](https://github.com/allboa/spikes/blob/main/rasterlayer-3031/screenshots/stock_3031.png),
+  [pole](https://github.com/allboa/spikes/blob/main/rasterlayer-3031/screenshots/stock_3031_pole.png),
+  [antimeridian](https://github.com/allboa/spikes/blob/main/rasterlayer-3031/screenshots/stock_3031_antimeridian.png)).
 - **Lon/lat COG, stock layer.** The image covers lon -180..180 and lat
   -40..-90 at 0.1 degrees (3600 x 500). `RasterReprojector` hits its
   10000-iteration cap with error 3600 px, the full image width, and every
   triangle has zero area, so nothing draws
-  ([screenshot](https://github.com/allboa/spikes/blob/spike-rasterlayer-3031/rasterlayer-3031/screenshots/stock_4326.png),
-  [mesh](https://github.com/allboa/spikes/blob/spike-rasterlayer-3031/rasterlayer-3031/screenshots/stock_4326_mesh.png)).
+  ([screenshot](https://github.com/allboa/spikes/blob/main/rasterlayer-3031/screenshots/stock_4326.png),
+  [mesh](https://github.com/allboa/spikes/blob/main/rasterlayer-3031/screenshots/stock_4326_mesh.png)).
   The error check interpolates an output position and sends it back
   through `inverseReproject` and `inverseTransform`. At the pole every
   longitude maps to one point. On the 180 meridian proj4 returns -180 or +180,
@@ -57,16 +57,16 @@ seams show.
   -89.9 already exhausts the iteration cap (0.313 px), and at -90 it fails
   (`mesh-check.txt`).
 - **Forward error metric.** `src/forward-metric.js` is patched onto the
-  prototype at runtime. It projects the exact UV sample forward, compares it
+  prototype at runtime (it replaces a private method). It projects the exact UV sample forward, compares it
   with the interpolated output position, and divides by the local output size
   of one source pixel. It uses only the forward functions. With it, the same
   `RasterLayer` draws the lon -180..180 COG
-  ([full](https://github.com/allboa/spikes/blob/spike-rasterlayer-3031/rasterlayer-3031/screenshots/forward_4326.png),
-  [pole](https://github.com/allboa/spikes/blob/spike-rasterlayer-3031/rasterlayer-3031/screenshots/forward_4326_pole.png),
-  [antimeridian](https://github.com/allboa/spikes/blob/spike-rasterlayer-3031/rasterlayer-3031/screenshots/forward_4326_antimeridian.png),
-  [mesh](https://github.com/allboa/spikes/blob/spike-rasterlayer-3031/rasterlayer-3031/screenshots/forward_4326_mesh.png))
+  ([full](https://github.com/allboa/spikes/blob/main/rasterlayer-3031/screenshots/forward_4326.png),
+  [pole](https://github.com/allboa/spikes/blob/main/rasterlayer-3031/screenshots/forward_4326_pole.png),
+  [antimeridian](https://github.com/allboa/spikes/blob/main/rasterlayer-3031/screenshots/forward_4326_antimeridian.png),
+  [mesh](https://github.com/allboa/spikes/blob/main/rasterlayer-3031/screenshots/forward_4326_mesh.png))
   and the lon 90..270 COG
-  ([screenshot](https://github.com/allboa/spikes/blob/spike-rasterlayer-3031/rasterlayer-3031/screenshots/forward_4326-90-270.png)).
+  ([screenshot](https://github.com/allboa/spikes/blob/main/rasterlayer-3031/screenshots/forward_4326-90-270.png)).
   The 90..270 image converges to 0.125 px in 5372 vertices. On the pole-free
   image the forward metric needs 5323 vertices where the stock metric with
   wrapping needs 8221. The full-resolution 3600 x
@@ -95,10 +95,11 @@ seams show.
   3. polar tests: EPSG:3031 output, and a lon/lat input over the pole with
      the seam both at the image edge and inside the image.
 
-  This touches upstream issues #625, #366, #172 and #171, which were found by
+  This touches upstream issues #625, #366, #172 and #171 (and the polar examples #646 and #330), which were found by
   title and not read from this session. It fits the charter's upstream
   contribution goal and helps lonboard too.
-- The scene spec does not need to change. A raster layer references a COG
-  URL and the view CRS, and the renderer decides how to mesh it.
+- Scene spec 0.1 covers this only with materialized values or a
+  pre-projected mesh. Referencing a COG by URL needs a spec addition (see
+  0003).
 - Tiling and level of detail are out of scope here. The tiled question
   (gate A) is allboa/spikes#1, decision 0003.
