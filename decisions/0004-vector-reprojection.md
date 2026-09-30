@@ -59,7 +59,7 @@ Five routes, all ending in native interleaved GeoArrow IPC in EPSG:3031:
   Arrow stream, so geometry arrives as WKB (as decision 0002 found), and
   `geoarrow::geoarrow_writer()` encodes each batch in one C pass. With
   GDAL's Arrow and Parquet drivers switched off (`GDAL_SKIP`) it gives the
-  same output.
+  same 1.1 MB of IPC.
 
 ## Consequences
 
