@@ -69,8 +69,12 @@ stretch rule does not apply; its domain is `[-180, 180] x [-90, 90]`.
 ## Evidence
 
 Measured with gdalraster (GDAL 3.13.3, PROJ 9.9.0) on 72 bearings (5
-degrees apart), walking each in 0.5 degree steps, WGS84. Radial stretch is the projected length of each
-0.5 degree step divided by its length on a sphere of radius R. Half widths
+degrees apart), walking each in 0.5 degree steps, WGS84. Radial stretch is
+the projected length of each 0.5 degree step divided by its length on a
+sphere of radius R. aobcore's `crs_domain()` divides by the first step on
+each bearing instead (the centre's own scale), which needs no units: for
+EPSG:3031, whose scale at the pole is 0.97, it stops at 91 degrees and
+12.58e6 m rather than 92 and 12.8e6. Half widths
 are in thousands of km (1e6 m); "reach" is the angular distance from the
 centre where the walk stopped (min and max over bearings).
 
