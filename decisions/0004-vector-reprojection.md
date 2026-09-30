@@ -67,20 +67,39 @@ Five routes, all ending in native interleaved GeoArrow IPC in EPSG:3031:
   route, `read ! clip ! segmentize ! reproject ! write --of stream`, read
   batch by batch into native GeoArrow. The `clip` step was not run here. By
   the documentation it needs gdalraster 2.2 or later with GDAL 3.12 or later
-  for `segmentize`; only gdalraster 2.7.0 with GDAL 3.13.3 was tested. The
-  current `ogr2ogr` route stays as the fallback for older GDAL. This amends
-  the producer in decision 0002's consequences; that record's encoding
-  findings still stand. If 0002 is accepted first, read this as superseding
-  its producer paragraph.
+  for `segmentize`; only gdalraster 2.7.0 with GDAL 3.13.3 was tested. This
+  amends the producer in decision 0002's consequences; that record's
+  encoding findings still stand. If 0002 is accepted first, read this as
+  superseding its producer paragraph.
+- **Older GDAL is the common case on macOS.** Michael reports (2026-09-30)
+  that CRAN's Windows binaries carry GDAL 3.12, but CRAN's macOS binaries
+  were still at GDAL 3.8 when he last looked. gdalraster is now on
+  conda-forge, but GDAL on macOS remains an open problem. So the fallback
+  is a first-class route, not an edge case. On GDAL older than 3.12, GDAL
+  streams the source layer in its own CRS through the generic Arrow stream
+  (GDAL 3.6 or later), and R densifies, transforms and encodes each batch in
+  one wk pass (a densify filter, then `wk_transform_filter()`, then the
+  geoarrow writer). wk has no clip filter either, and GDAL's spatial filter
+  selects features without cutting them. So until wk has densify and clip
+  filters, the current `ogr2ogr` route (a `/vsimem` GeoPackage, `-clipsrc`,
+  `-segmentize`, `-t_srs`) is used whenever a clip or densify is needed.
+  The wk route inherits the per-coordinate limits below, so a lon/lat view
+  still needs GDAL's own reprojection. The generic stream plus
+  `wk_transform_filter()` part matches the spike's `wk_proj_stream` route,
+  which ran only on GDAL 3.13.3; neither it nor a densify step has been run
+  on GDAL 3.8.
 - **In-memory inputs.** `vector_stream()` may take an optional `trans`, any
   `wk_trans`, applied with `wk_transform_filter()` in front of the geoarrow
   writer. Core Imports do not change: `wk_transform_filter()` is in wk, and
   the PROJ package goes in Suggests or the caller supplies the transform.
   When the view CRS is geographic, `trans` is refused with a message that
   points to the GDAL route, which cuts at the antimeridian and poles.
-- **Densify.** Until wk or PROJ has a segmentize filter, in-memory inputs
-  are densified by the caller or through GDAL. A wk segmentize filter is an
-  upstream candidate.
+- **Densify.** A densify filter in wk is the default home (Michael,
+  2026-09-30), to be revisited. Plain linear densifying in the source CRS
+  comes first. Geodesic densifying (s2) and adaptive resampling in the view
+  CRS (as in D3's projection resampling, bigcurve) are the contenders. Until
+  the filter exists, in-memory inputs are densified by the caller or through
+  GDAL. A wk clip filter is open work alongside it.
 - **Domain clip.** Producers clip to the view CRS's valid area in the source
   CRS before reprojecting, on every route. A default from the view CRS's
   PROJ area of use is a candidate, not tested here.
