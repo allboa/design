@@ -79,10 +79,15 @@ Five routes, all ending in native interleaved GeoArrow IPC in EPSG:3031:
   streams the source layer in its own CRS through the generic Arrow stream
   (GDAL 3.6 or later), and R densifies, transforms and encodes each batch in
   one wk pass (a densify filter, then `wk_transform_filter()`, then the
-  geoarrow writer). Until wk has the densify filter, the current `ogr2ogr`
-  route (a `/vsimem` GeoPackage, `-segmentize`, `-t_srs`) stays. This route
-  inherits the per-coordinate limits below, so a lon/lat view still needs
-  GDAL's own reprojection.
+  geoarrow writer). wk has no clip filter either, and GDAL's spatial filter
+  selects features without cutting them. So until wk has densify and clip
+  filters, the current `ogr2ogr` route (a `/vsimem` GeoPackage, `-clipsrc`,
+  `-segmentize`, `-t_srs`) is used whenever a clip or densify is needed.
+  This route inherits the per-coordinate limits below, so a lon/lat view
+  still needs GDAL's own reprojection. The generic stream plus
+  `wk_transform_filter()` part matches the spike's `wk_proj_stream` route,
+  which ran only on GDAL 3.13.3; neither it nor a densify step has been run
+  on GDAL 3.8.
 - **In-memory inputs.** `vector_stream()` may take an optional `trans`, any
   `wk_trans`, applied with `wk_transform_filter()` in front of the geoarrow
   writer. Core Imports do not change: `wk_transform_filter()` is in wk, and
@@ -94,7 +99,7 @@ Five routes, all ending in native interleaved GeoArrow IPC in EPSG:3031:
   comes first. Geodesic densifying (s2) and adaptive resampling in the view
   CRS (as in D3's projection resampling, bigcurve) are the contenders. Until
   the filter exists, in-memory inputs are densified by the caller or through
-  GDAL.
+  GDAL. A wk clip filter is open work alongside it.
 - **Domain clip.** Producers clip to the view CRS's valid area in the source
   CRS before reprojecting, on every route. A default from the view CRS's
   PROJ area of use is a candidate, not tested here.
