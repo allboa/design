@@ -17,7 +17,7 @@ made since then are in [`decisions/`](decisions/).
 | `scenespec` | Scene spec JSON Schema, fixtures, validator, conformance scenes |
 | `spikes` | Throwaway experiments; each ends in a decision record here |
 | `aobcore` | Lean R core: producers to GeoArrow and grid descriptors, scene building, embed transport, bundled renderer (placeholder name) |
-| `aobview` | `view(x)` for sf and terra, palettes, legends, popups (placeholder name) |
+| `aobview` | `view(x)` for wk-handleable vectors (sf included) and terra, palettes, legends, popups (placeholder name) |
 
 ## Design principles
 

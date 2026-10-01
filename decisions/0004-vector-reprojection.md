@@ -1,7 +1,7 @@
 # 0004: GDAL reprojects what it reads; wk + PROJ for data already in R
 
 - Date: 2026-09-30
-- Status: proposed
+- Status: proposed (its geographic-view refusal amended by 0008)
 - Issue: allboa/spikes#8
 - Decided by: agent
 
