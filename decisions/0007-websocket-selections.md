@@ -109,6 +109,9 @@ Recommended: **a**, with all of these:
   `Host` must pass 0006's check, with `aobcore.serve_hosts` and the same
   escaped, once-per-host warning (else 403). Only `GET` with
   `Upgrade: websocket` is an upgrade; `/<token>/ws` without it answers 404.
+  The checks run in that order, path, then `Host`, then `Origin`, so a
+  wrong path is a silent 404 whatever its headers. (Amended 2026-10-01,
+  from aobcore#43.)
 - **`Origin` check.** The `Origin` must be `http://127.0.0.1:<port>` or
   `http://localhost:<port>`, or, for each value `H` in
   `aobcore.serve_hosts`, `http://H` or `https://H` (an IDE proxy serves
@@ -136,6 +139,14 @@ Recommended: **a**, with all of these:
   upgrade. A report of this to httpuv upstream (refusing in `onHeaders()`
   should not upgrade) is a possible follow-up; it is a step outside the
   org, so it waits for Michael's OK.
+  The `Host` and `Origin` refusal warnings are given from `onHeaders()`,
+  since httpuv may skip `onWSOpen()` for a client that has already hung
+  up; `onWSOpen()` closes a refused socket (1008) without a warning. A
+  client that hangs up during a refused upgrade can make httpuv print
+  "Warning in rm(list = wsconn_address(handle), envir = private$wsconns)
+  : object '...' not found". It comes from httpuv's own bookkeeping, is
+  known and harmless, and leaves no state in R. (Amended 2026-10-01, from
+  aobcore#43.)
 - **Text frames only from the page.** A binary frame closes the socket
   (1003). Binary frames are kept for R to page blobs (0006 item 5).
 - **Size cap.** A text message over `getOption("aobcore.ws_max_message", 2^20)`
@@ -159,16 +170,27 @@ Recommended: **a**, with all of these:
 - **Several pages.** Each socket is a connection with a number. At most 8
   are open per server; a ninth is closed (1013, try again later) with a
   warning naming the cap. Two tabs on one view are two connections.
+  The cap's warning is given once per server, since a page retries.
+  (Amended 2026-10-01, from aobcore#43.)
+- **Warnings after a socket is accepted are capped.** The warnings for
+  closes 1003, 1007, 1008 (a message before `hello`), 4000, 1009 and 1011,
+  for a scene spec mismatch in `hello`, and for messages dropped for bad
+  fields (still once per connection and type) share one count: the first
+  5 per server are given, then one saying further ones are not shown, so
+  a page that misbehaves in a loop cannot flood the console.
+  (Amended 2026-10-01, from aobcore#43.)
 - **Diagnosing refusals.** An `Origin` refusal warns in R as a `Host`
   refusal does: the value escaped (printable ASCII only, other bytes as
   `\xNN`) and cut to 80 bytes, naming `aobcore.serve_hosts` and saying to
   allow it only if it is the IDE proxy's. Warnings are given for the
   first 5 distinct `Origin` values per server, then once "further
-  refusals not shown". Wrong-path refusals (404) and cross-site refusals
-  that a browser makes on its own are silent in R; the page sees only a
-  failed connection. A `serve_hosts` value with an explicit default port
-  (`host:443`) will not match an `Origin`, since browsers leave a default
-  port out of `Origin`; the help says to list the host without it too.
+  refusals not shown"; a missing `Origin` counts as one of those 5
+  values. (Amended 2026-10-01, from aobcore#43.) Wrong-path refusals
+  (404) and cross-site refusals that a browser makes on its own are
+  silent in R; the page sees only a failed connection. A `serve_hosts`
+  value with an explicit default port (`host:443`) will not match an
+  `Origin`, since browsers leave a default port out of `Origin`; the help
+  says to list the host without it too.
 - **No change to the HTTP routes**, their headers or their checks.
 
 What the token, `Host` and `Origin` checks together do not stop: another
@@ -221,13 +243,24 @@ Page to R:
   CRS units (projected and cartesian views) or `[lon, lat]` (globe), and
   is present on a click even when it hit no feature, so R can look up a
   raster value there later.
+- **Triggers, as built.** In selection mode (some layer selectable) every
+  click sends a `select`, with `at`: a click on a feature sends `click`
+  (or `toggle` with Shift or Cmd); a click on nothing sends `click` with
+  no items; a Shift or Cmd click on nothing sends `toggle` with the
+  selection unchanged, so a slipped Shift click does not lose a multiple
+  selection. Escape sends `clear`, and only when something was selected.
+  (`at` is left out when the point cannot be unprojected, as off the
+  globe.) (Amended 2026-10-01, from aobcore#44.)
 - `view` is sent when the camera settles: 250 ms after its last change,
   and at most four times a second. Orthographic views send `extent`
   (`[xmin, xmax, ymin, ymax]`, view CRS units), `zoom` and
   `units_per_pixel` (the renderer's `currentView()`); a globe sends
   `center` (`[lon, lat]`) and `zoom` instead. This is decision 0003's
   "one round trip per settled view change"; using it to plan tiles is a
-  later milestone.
+  later milestone. The page also sends a `view` after each `hello` from R,
+  first or on reconnecting, within the same limit of one per 250 ms, so R
+  has the camera without waiting for the viewer to move it. (Amended
+  2026-10-01, from aobcore#44.)
 - `seq` counts up per connection, so R can tell order and drop a stale
   message.
 
@@ -327,16 +360,29 @@ aobcore, on the `"aob_server"` handle (names open to change):
 - `srv$selection()`: the latest selection as a data frame with columns
   `layer` (id) and `row` (1-based Arrow row), with attributes `at`,
   `connection`, `seq` and `time`; zero rows when nothing is selected.
+  As built it also carries `trigger` and `scene` (the serial of the scene
+  it was made on). (Amended 2026-10-01, from aobcore#43.)
 - `srv$view_state()`: the latest `view` message as a list, or `NULL`.
 - `srv$wait(type = "select", timeout = Inf)`: services the loop
   (`httpuv::service(100)`) until a message of that type newer than the
   call arrives, and returns what `selection()` or `view_state()` then
   returns; `NULL` (with a message) at the timeout. An interrupt (Esc,
-  Ctrl-C) ends it as any R call.
+  Ctrl-C) ends it as any R call. `type` is `"select"` or `"view"`; while
+  it waits it calls `httpuv::service()` with a timeout of 1 to 100 ms,
+  never 0. (Amended 2026-10-01, from aobcore#43.)
 - `srv$wait()`, and the `service(0)` the selection functions run first,
   must not be called from inside an `srv$on()` callback, which is itself
   run by the loop: a flag set while callbacks run makes that an error
   rather than a nested run of the loop.
+- **"Service first", as built.** The selection functions do not call
+  `httpuv::service()` first: in httpuv 1.6.17 `service(0)` runs the loop
+  until something pauses it, which from there never returns, and
+  `service(NA)` runs only one callback, so messages queued while R was
+  busy would be taken in one per call. They run `later::run_now(0, all =
+  TRUE)` (the `later` loop httpuv uses) until it reports nothing ran, at
+  most 1000 times, so every message already queued is counted. Inside an
+  `srv$on()` callback they skip that and read the state as it is.
+  (Amended 2026-10-01, from aobcore#43.)
 - `srv$on(type, f)`: calls `f(message)` for each message of that type and
   returns a function that removes it; an error in `f` becomes a warning.
 - `srv$connections()`: how many pages are connected.
@@ -363,7 +409,11 @@ view_state(v)                 # the settled view, in the view CRS
   finite `timeout` is given, so a script cannot hang on a page nobody
   will open.
 - Each of these first services the loop once (`httpuv::service(0)`), so a
-  selection made just before the call is counted.
+  selection made just before the call is counted. (Amended 2026-10-01,
+  from aobview#23: they drain the loop as `srv$selection()` does, above,
+  not with `service(0)`. `wait_for_selection()` is the exception: it does
+  not drain before it starts waiting, so a selection made while R was busy
+  and still queued counts as the next one and ends the wait.)
 
 Why both indices and rows: indices are cheap and exact for a user who
 joins back to their own data; rows are what most people want, and they
@@ -403,6 +453,19 @@ adding one; that refines 0006 item 4 ("printing it opens `v$server$url`")
 without changing what the user sees first. The selection is cleared when the
 scene is replaced, in R and, by the reload, in the page, since the page cannot
 show a selection R keeps until R can push one.
+
+As built (amended 2026-10-01, from aobcore#43 and aobcore#44):
+
+- Only the selection is cleared when the scene is replaced; R keeps the
+  last `view_state()`, since the reloaded page keeps its camera.
+- The page keeps its camera in `sessionStorage` under a 64-bit hash of
+  the page's directory path (which holds the token), not under the token
+  itself. The saved camera is read once and removed, and is restored only
+  when it was saved under an older scene serial, with the same view type
+  and view CRS.
+- A page follows `reload` only when its scene serial is greater than the
+  page's own, so a `reload` at the page's own serial cannot reload it for
+  ever.
 
 ### 6. Selection in the page
 
@@ -468,6 +531,12 @@ producers write 0.6 only for scenes that use it.
   to 30 s) while it is open. On reconnecting it sends `hello` and then its
   whole selection. A page refused for a reason that will not change (1003,
   1007, 1008, 4000) does not retry, and its note says why.
+  (Amended 2026-10-01, from aobcore#44.) Opening a socket alone does not
+  reset the backoff, since R can accept a socket and close it at once
+  (1013, 1011): the delay goes back to 1 s only after R's `hello` and 5 s
+  with the socket still open. 1003, 1007, 1008 and 4000 are the final
+  codes; every other close is retried. A page closed with 1013 retries,
+  and its note says "too many pages are connected to R".
 - A busy R does not close the socket, so the page shows nothing then.
 
 ### 9. Lifecycle, and later transports
@@ -586,6 +655,15 @@ belong in the implementation issues.
   R process (processx, already installed here; added to Suggests only if
   the issue needs it). The `websocket` package, if a later issue wants a
   full client in R tests, goes in Suggests with `skip_if_not_installed()`.
+  (Amended 2026-10-01, from aobcore#43 and aobcore#46: the child R
+  processes are started with base R's `system2()` and `Rscript`, not
+  processx, which is not in Suggests.)
+- **R, at exit** (aobcore#46). A child R process serves a scene, opens a
+  socket to it and ends: ending normally with a page connected exits with
+  status 0, a script that stops with an error exits with its error
+  (status 1, not a signal's), and unloading aobcore closes the socket with
+  1001. A test without a child checks that the exit finalizer forgets the
+  sockets without closing them. (Amended 2026-10-01.)
 - **aobview.** The mapping from layer rows to source rows, with empty
   geometries, an untransformable geometry, mixed geometry split into three
   layers and a geometry collection; `selection()` and `selected()` for sf,
@@ -678,3 +756,39 @@ Each is a default this record sets, with the alternative it passed over:
 - **`view_add()` clears the selection**, until R can push a selection to
   the page. Alternative: keep the rows of layers whose data did not
   change, which needs R to page `select` to keep the page in step.
+
+## Amendments
+
+- 2026-10-01, from aobcore#43 (websocket route, protocol 1 and the server
+  API), aobcore#44 (renderer) and aobcore#46 (exit), and aobview#23 (row
+  maps and the selection functions):
+  - Item 1: the checks run path, `Host`, `Origin`, so a wrong path is a
+    silent 404; a missing `Origin` counts among the 5 warned values;
+    refusal warnings come from `onHeaders()`, and `onWSOpen()` closes a
+    refused socket with 1008 silently; the warnings after a socket is
+    accepted (closes 1003, 1007, 1008, 4000, 1009, 1011, a spec mismatch,
+    dropped messages) share a cap of 5 per server plus one final one; the
+    1013 cap warns once per server; httpuv's occasional `rm(...
+    wsconns)` warning on an early hang-up is known and harmless.
+  - Item 2: in selection mode every click sends a `select` with `at`; a
+    click on nothing sends `click` with no items; a Shift or Cmd click on
+    nothing sends `toggle` with the selection unchanged; Escape sends
+    `clear`, only when something was selected; the page sends a `view`
+    after each `hello` from R, at most one per 250 ms.
+  - Item 4: "service first" is `later::run_now(0, all = TRUE)` until
+    nothing runs (at most 1000 times), since `httpuv::service(0)` never
+    returns from there in httpuv 1.6.17 and `service(NA)` runs only one
+    callback; `wait()` takes `"select"` or `"view"`; `selection()` also
+    carries `trigger` and `scene` attributes; `wait_for_selection()` does
+    not drain before waiting, so a selection made while R was busy counts
+    as the next one.
+  - Item 5: `view_state()` is kept when the scene is replaced (only the
+    selection clears); the camera is kept in `sessionStorage` under a
+    64-bit hash of the page's path, restored only from an older serial with
+    the same view type and CRS; a `reload` is followed only for a serial
+    greater than the page's.
+  - Item 8: the backoff (1 s doubling to 30 s) resets only after R's
+    `hello` and 5 s open; 1003, 1007, 1008 and 4000 are final; a 1013
+    close shows "too many pages are connected to R".
+  - Testing: child R processes through `system2()`, not processx; the exit
+    tests from aobcore#46.
