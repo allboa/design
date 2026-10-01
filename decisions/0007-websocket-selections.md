@@ -20,21 +20,21 @@ scene spec?
 
 Proposed: the server from `serve_scene()` also takes a websocket at
 `/<token>/ws`, after the same `Host` check as every route plus an `Origin`
-check, both made when the upgrade's headers arrive and again when the socket
-opens (the spike found httpuv opens the socket even after the first check
-has refused it). Messages are JSON text frames of **protocol 1**, versioned
-apart from the scene spec. The page sends `hello`, `select` and `view`; R
-sends `hello` and `reload`. A selection is the page's whole selection, a
-list of layer ids each with 0-based row indices into that layer's Arrow
-data, the same index the renderer already uses for popups. R adds 1 and maps
-it, through a table aobview keeps outside the scene, to rows of the object
-the user passed to `view()`. In R the selection is **pulled**:
-`selection(v)` gives indices, `selected(v)` gives the rows of the object,
-and `wait_for_selection(v)` blocks until the next one; a callback stays an
-aobcore primitive. R pushes only `reload` in this milestone. **No scene spec
-change**: which layers can be selected is said by the transport, in R's
-`hello`. Embedded pages have no socket, and the R functions say so. Servers
-stay one per scene.
+check, both made when the upgrade's headers arrive and again, first of all, when
+the socket opens: the spike and its review found that httpuv completes the
+upgrade and delivers messages even after the first check has refused it.
+Messages are JSON text frames of **protocol 1**, versioned apart from the scene
+spec. The page sends `hello`, `select` and `view`; R sends `hello` and `reload`.
+A selection is the page's whole selection, a list of layer ids each with 0-based
+row indices into that layer's Arrow data, the same index the renderer already
+uses for popups. R adds 1 and maps it, through a table aobview keeps outside the
+scene, to rows of the object the user passed to `view()`. In R the selection is
+**pulled**: `selection(v)` gives indices, `selected(v)` gives the rows of the
+object, and `wait_for_selection(v)` blocks until the next one; a callback stays
+an aobcore primitive. R pushes only `reload` in this milestone. **No scene spec
+change**: which layers can be selected is said by the transport, in R's `hello`.
+Embedded pages have no socket, and the R functions say so. Servers stay one per
+scene.
 
 ## What exists today
 
@@ -55,7 +55,7 @@ stay one per scene.
   `add_sfc()` (`R/view.R`) drops empty geometries (line 345) and those that
   cannot be transformed (line 362), splits mixed geometry into up to three
   layers (line 376, `idx <- rows[split$rows[[kind]]]`), and splits a
-  geometry collection into parts (line 787 on), so one source row can be
+  geometry collection into parts (lines 778 to 789), so one source row can be
   several rows of one layer. The mapping `idx` is computed and dropped; the
   view does not keep it.
 - **The server** (aobcore `R/serve.R`, decision 0006 part B). One httpuv
@@ -63,8 +63,18 @@ stay one per scene.
   check with `aobcore.serve_hosts`, `GET` and `HEAD` only, state in an
   environment (`srv$state`) that `serve_scene(scene, server = srv)`
   replaces in place. aobview's served views use it through `serve_view()`
-  (`R/transport.R`), and `view_add()` on a served view replaces the scene
-  and opens the URL again.
+  (`R/transport.R`), which calls `serve_scene(open = FALSE)`;
+  `view_add()` on a served view replaces the scene on the same server.
+  The page is opened by `print.aob_view()`, each time a served view is
+  printed in an interactive session.
+- **Upgrades on aobcore main today.** `serve_scene()`'s app has only
+  `call`, so httpuv accepts a websocket upgrade on any path, with no token,
+  `Host` or `Origin` check (`call()` is not consulted for an upgrade).
+  httpuv's `AppWrapper` then prints "Error in try(private$app$onWSOpen(ws))
+  : attempt to apply non-function" to the R console and closes the socket
+  with 1011. A page on any origin can trigger that. A small aobcore fix,
+  being made ahead of this record, refuses every upgrade in `onHeaders()`
+  and closes at once in `onWSOpen()`; this record builds on that fix.
 - **JSON.** aobcore writes JSON in base R (`R/json.R`) but cannot read it.
   jsonlite is already in aobcore's Suggests (for tests).
 - **httpuv 1.6.17** (checked here): `startServer(host, port, app, quiet)`;
@@ -109,25 +119,39 @@ Recommended: **a**, with all of these:
   page on another origin cannot read the token, but if it ever learns it
   (a URL pasted in a chat), the browser would still let it open the
   socket, and only `Origin` stops it.
-- **Both checks run twice.** In `onHeaders()`, which answers 403 or 404
-  before the handshake, and again in `onWSOpen()`, which closes the socket
-  at once (1008) if they fail. The spike (Evidence) found that httpuv
-  sends the refusal from `onHeaders()` and then still calls `onWSOpen()`
-  for that connection, so a server that checked only in `onHeaders()`
-  would register a socket for a refused client. `call()` is not called
-  for an upgrade.
+- **Both checks run twice.** In `onHeaders()`, which answers 403 or 404,
+  and again in `onWSOpen()`, which closes the socket at once (1008) if they
+  fail. **`onHeaders()` alone does not refuse an upgrade.** When it returns
+  403 or 404 for one, httpuv writes that response and then, on the same
+  connection, `HTTP/1.1 101 Switching Protocols`: the socket is live, and
+  httpuv calls `onWSOpen()` with the refused request. In the review's
+  check, a client with a wrong token and a foreign `Origin` got 300
+  messages of 1 MiB each into R's `onMessage` handler when the check was
+  only in `onHeaders()`, and none when `onWSOpen()` checked again and
+  closed (Evidence). So the check is **the first thing `onWSOpen()`
+  does**: before it registers `onMessage` or `onClose`, counts the socket
+  toward the cap of 8, gives it a connection number or sends `hello`. A
+  refused socket leaves no trace in the server's state. A browser shows
+  the 403 as a failed connection (1006). `call()` is not called for an
+  upgrade. A report of this to httpuv upstream (refusing in `onHeaders()`
+  should not upgrade) is a possible follow-up; it is a step outside the
+  org, so it waits for Michael's OK.
 - **Text frames only from the page.** A binary frame closes the socket
   (1003). Binary frames are kept for R to page blobs (0006 item 5).
-- **Size cap.** A text message over `getOption("aobcore.ws_max_message",
-  2^20)` bytes (1 MiB) closes the socket (1009), with a warning in R. httpuv
-  has no cap of its own and hands R the whole message (the spike sent
-  2 MiB), so the cap limits what R parses, not what httpuv buffers; the
-  peer that can send it has already passed the token, `Host` and `Origin`
-  checks. 1 MiB holds about 120000 row indices; the page knows the cap
-  (from `hello`) and does not send a larger selection: it keeps it in the
+- **Size cap.** A text message over `getOption("aobcore.ws_max_message", 2^20)`
+  bytes (1 MiB) closes the socket (1009), with a warning in R. httpuv has no cap
+  of its own and hands R the whole message (the spike sent 2 MiB), so the cap
+  limits what R parses, not what httpuv buffers: R parses only messages from
+  peers that passed the checks, and httpuv buffers what any raw client sends
+  until R closes it. 1 MiB holds about 120000 row indices; the page knows the
+  cap (from `hello`) and does not send a larger selection: it keeps it in the
   page and shows a note that it is too large to send.
-- **Malformed messages.** Text that is not JSON, or JSON that is not an
-  object with a string `type`, closes the socket (1007). A known type with
+- **Malformed messages.** Text that is not valid UTF-8, text that is not
+  JSON, or JSON that is not an object with a string `type`, closes the
+  socket (1007). Every handler (`onHeaders()`, `onWSOpen()`, `onMessage`,
+  `onClose`) is wrapped in `tryCatch()`, so an error in R closes the
+  socket with the right code and a warning, never through httpuv's own
+  `try()`, which prints to the console and closes with 1011. A known type with
   bad fields (an unknown layer, a row out of range, a row that is not a
   whole number) is dropped with a warning, once per connection and type,
   and the connection stays. An unknown type is ignored, so a newer page can
@@ -135,6 +159,16 @@ Recommended: **a**, with all of these:
 - **Several pages.** Each socket is a connection with a number. At most 8
   are open per server; a ninth is closed (1013, try again later) with a
   warning naming the cap. Two tabs on one view are two connections.
+- **Diagnosing refusals.** An `Origin` refusal warns in R as a `Host`
+  refusal does: the value escaped (printable ASCII only, other bytes as
+  `\xNN`) and cut to 80 bytes, naming `aobcore.serve_hosts` and saying to
+  allow it only if it is the IDE proxy's. Warnings are given for the
+  first 5 distinct `Origin` values per server, then once "further
+  refusals not shown". Wrong-path refusals (404) and cross-site refusals
+  that a browser makes on its own are silent in R; the page sees only a
+  failed connection. A `serve_hosts` value with an explicit default port
+  (`host:443`) will not match an `Origin`, since browsers leave a default
+  port out of `Origin`; the help says to list the host without it too.
 - **No change to the HTTP routes**, their headers or their checks.
 
 What the token, `Host` and `Origin` checks together do not stop: another
@@ -201,7 +235,7 @@ R to page:
 
 ```json
 {"type": "hello", "protocol": 1, "connection": 2, "scene": 3,
- "select": ["nc", "coast"], "max_message": 1048576}
+ "spec": "0.5", "select": ["nc", "coast"], "max_message": 1048576}
 
 {"type": "reload", "scene": 4}
 ```
@@ -215,14 +249,21 @@ R to page:
   replaced. A `select` or `view` for another serial is dropped without a
   warning (a tab left open on an old scene), and R sends that page
   `reload`.
+- `spec` is the scene spec version of the scene being served, as 0006
+  item 5 says `hello` carries ("the scene spec version both sides
+  speak"). The page's `hello` lists the versions its renderer draws
+  (`specs`); if the scene's is not among them, R logs a warning naming
+  both, and the page shows its usual "this renderer draws ..." error. It
+  matters little today (the page and renderer come from the same server),
+  but it will when R pushes a `scene` over the socket.
 - `select` lists the layers the page may let the viewer select (item 6).
 - Reserved for later, from 0006 item 5: R to page `scene`, `layers`,
   `view`, `select` (a selection set from R) and binary blob frames, each a
   new type in protocol 1.
 
-Close codes: 1000 normal; 1001 the server is stopping; 1003 a binary
-frame; 1007 not JSON; 1008 refused or out of order; 1009 too large; 1013
-too many connections; 4000 protocol.
+Close codes: 1000 normal; 1001 the server is stopping; 1003 a binary frame; 1007
+not UTF-8 or not JSON; 1008 refused or out of order; 1009 too large; 1013 too
+many connections; 4000 protocol.
 
 ### 3. Row ids versus feature ids
 
@@ -249,7 +290,15 @@ disagree. The mapping to the user's rows lives in R:
   that `add_sfc()` already computes (layer row `i`, 1-based, came from row
   `idx[i]` of the object), and which source the layer came from. These go
   in the view (`v$sources`: per source its name, the object itself, and
-  per layer id its `idx`), never in the scene. Several layer rows can map
+  per layer id its `idx`), never in the scene. The view also keeps the
+  scene serial its server gave its scene (item 2).
+- **Stale views.** `v2 <- view_add(v, ...)` replaces the scene on `v`'s
+  server, so `v` and `v2` share one server but not one row map. Selections
+  are recorded with the serial of the scene they were made on, and the
+  selection functions compare it with the view's: on `v`, after the scene
+  was replaced, they are an error ("This view was replaced by
+  `view_add()`; use the view it returned."), never a mapping through the
+  wrong rows. Several layer rows can map
   to one source row (a geometry collection's parts); R deduplicates.
 - A raster layer is never selectable in this milestone; a click on one
   still sends `at`.
@@ -284,6 +333,10 @@ aobcore, on the `"aob_server"` handle (names open to change):
   call arrives, and returns what `selection()` or `view_state()` then
   returns; `NULL` (with a message) at the timeout. An interrupt (Esc,
   Ctrl-C) ends it as any R call.
+- `srv$wait()`, and the `service(0)` the selection functions run first,
+  must not be called from inside an `srv$on()` callback, which is itself
+  run by the loop: a flag set while callbacks run makes that an error
+  rather than a nested run of the loop.
 - `srv$on(type, f)`: calls `f(message)` for each message of that type and
   returns a function that removes it; an error in `f` becomes a warning.
 - `srv$connections()`: how many pages are connected.
@@ -305,7 +358,10 @@ view_state(v)                 # the settled view, in the view CRS
   an sfc. `source` defaults to the only source with selected rows, and is
   an error naming the sources when there are several.
 - `wait_for_selection(v, timeout = Inf)` waits for the next `select`
-  message (a click, a toggle or a clear) and returns `selected(v)`.
+  message (a click, a toggle or a clear) and returns `selected(v)`. In a
+  non-interactive session with no page connected it is an error unless a
+  finite `timeout` is given, so a script cannot hang on a page nobody
+  will open.
 - Each of these first services the loop once (`httpuv::service(0)`), so a
   selection made just before the call is counted.
 
@@ -336,16 +392,17 @@ Options:
   (layer diffing, blob arrival by socket) that this decision does not
   need, and it would make this milestone large.
 
-Recommended: **b**. When `serve_scene(scene, server = srv)` replaces the
-scene, R gives it a new serial and sends `reload` to every connected page;
-the page reloads itself, and keeps the camera (it saves its view state in
-`sessionStorage` under the token, and the reloaded page restores it when
-the serial is newer and the view CRS is the same). `view_add()` on a served
-view then opens the URL only when no page is connected, instead of every
-time; that refines 0006 item 4 ("opens the page again") without changing
-what the user sees first. The selection is cleared when the scene is
-replaced, in R and, by the reload, in the page, since the page cannot show
-a selection R keeps until R can push one.
+Recommended: **b**. When `serve_scene(scene, server = srv)` replaces the scene,
+R gives it a new serial and sends `reload` to every connected page; the page
+reloads itself, and keeps the camera (it saves its view state in
+`sessionStorage` under the token, and the reloaded page restores it when the
+serial is newer and the view CRS is the same). `print.aob_view()` on a served
+view then opens the URL only when no page is connected, instead of each time it
+is printed, so `v <- view_add(v, ...); v` updates the open tab rather than
+adding one; that refines 0006 item 4 ("printing it opens `v$server$url`")
+without changing what the user sees first. The selection is cleared when the
+scene is replaced, in R and, by the reload, in the page, since the page cannot
+show a selection R keeps until R can push one.
 
 ### 6. Selection in the page
 
@@ -357,8 +414,9 @@ a selection R keeps until R can push one.
   other layers are as today. `serve_scene(select = )` sets the list: `NULL`
   (the default) is every vector layer, a character vector names layer ids,
   `character(0)` none. aobview passes the default.
-- A click on a feature selects it and only it; a click with Shift (or Ctrl
-  or Cmd) adds or removes it; a click on nothing, or Escape, clears. A
+- A click on a feature selects it and only it; a click with Shift (or Cmd)
+  adds or removes it (not Ctrl, which is a context-menu click on
+  macOS); a click on nothing, or Escape, clears. A
   0.5 popup still opens as today for the clicked feature. Selected features
   are drawn highlighted, light and dark; how is the renderer's choice.
   Keyboard selection follows the popup's, when that exists.
@@ -485,26 +543,44 @@ committed; they can go to allboa/spikes if wanted. The page opened
 - **httpuv still calls `onWSOpen()` after `onHeaders()` has refused the
   upgrade**, for every refused case above (the 403s and the 404), with the
   refused request in `ws$request`. The spike's second check closed each at
-  once. `call()` was never called for an upgrade. This is why item 1
-  checks twice.
+  once. `call()` was never called for an upgrade.
+
+**Review check** (in the same scratchpad, `rev17/`). On the wire, a
+refusal from `onHeaders()` is the 403 or 404 response followed on the same
+connection by `HTTP/1.1 101 Switching Protocols`, and the socket is live.
+A raw client with a wrong token and a foreign `Origin` sent 300 messages
+of 1 MiB each: with the check only in `onHeaders()`, all 300 (314572800
+bytes) reached R's `onMessage` handler; with the check repeated at the top
+of `onWSOpen()`, which closed before registering anything, none did. This
+is why item 1 checks twice, and first. The same check showed that
+aobcore main's `serve_scene()`, which has only `call`, prints "Error in
+try(private$app$onWSOpen(ws)) : attempt to apply non-function" for an
+upgrade on any path (What exists today), and that `httpuv::service()` can
+be called from inside a callback the loop is running, which is why item
+4 guards against it.
 
 Not checked: an IDE proxy (RStudio Server, Posit Workbench, code-server)
-forwarding a websocket, and the `Origin` it sends; Firefox and Safari. Those
+forwarding a websocket, and the `Origin` it sends; Positron, whose viewer
+proxies `localhost` through another port, so the page's `Origin` differs
+from the server's; Firefox and Safari. Those
 belong in the implementation issues.
 
 ## Testing
 
-- **R, no network.** Most tests drive the app's `onHeaders()` and
-  `onWSOpen()` directly with a fake `ws` (an environment with `request`,
-  `onMessage()`, `onClose()`, `send()` and `close()` that record calls).
-  They cover: each refusal (path, `Host`, `Origin`, missing `Origin`, a
-  listed `aobcore.serve_hosts` value over `http` and `https`) in both
-  places; close codes for binary, non-JSON, too large and out of order;
-  dropped messages with their once-only warnings; the connection cap; the
-  scene serial and `reload`; the selection state and `srv$selection()`,
-  `srv$view_state()`, `srv$wait()` (with a message queued by `later` and
-  with a timeout) and `srv$on()`. No websocket client package is needed;
-  all skip without httpuv or jsonlite.
+- **R, no network.** Most tests drive the app's `onHeaders()` and `onWSOpen()`
+  directly with a fake `ws` (an environment with `request`, `onMessage()`,
+  `onClose()`, `send()` and `close()` that record calls). They cover: each
+  refusal (path, `Host`, `Origin`, missing `Origin`, a listed
+  `aobcore.serve_hosts` value over `http` and `https`) in both places; close
+  codes for binary, non-JSON, too large and out of order; dropped messages with
+  their once-only warnings; the connection cap; invalid UTF-8 and a parse
+  error closing with 1007 (never 1011); the `Origin` refusal warnings, escaped,
+  cut and capped at 5 values; a refused socket leaving no connection, number or
+  handler behind; the scene serial and `reload`; the selection state and
+  `srv$selection()`, `srv$view_state()`, `srv$wait()` (with a message queued by
+  `later` and with a timeout), `srv$on()`, and the error for `srv$wait()` or
+  `service()` called inside an `srv$on()` callback. No websocket client package
+  is needed; all skip without httpuv or jsonlite.
 - **R, over a socket.** The status lines of real upgrade requests (101,
   403, 404) from a base R `socketConnection()` against a server in a child
   R process (processx, already installed here; added to Suggests only if
@@ -514,7 +590,9 @@ belong in the implementation issues.
   geometries, an untransformable geometry, mixed geometry split into three
   layers and a geometry collection; `selection()` and `selected()` for sf,
   sfc and SpatVector sources and for two sources; the errors on embedded
-  and stopped views.
+  and stopped views, on a view replaced by `view_add()`, and for
+  `wait_for_selection()` with no page, no finite timeout and no
+  interactive session.
 - **Browser** (headless Chromium through playwright-core, as the popup
   checks are run now, in `tools/`): a served EPSG:3031 view of the
   CCAMLR fixture first (polar first), then Web Mercator. A click on a
@@ -544,11 +622,15 @@ belong in the implementation issues.
 - **aobview.** Views keep a row map and a reference to each vector source
   object. New exports `selection()`, `selected()`, `wait_for_selection()`
   and `view_state()`.
-- **Decision 0006.** Item 5's sketch holds: the route, the `Origin` check,
-  JSON with a `type`, 0-based rows, `hello`. This record settles its open
-  points: Arrow row ids, pulled from R, one server per scene. One
-  refinement: `view_add()` on a served view reloads connected pages
-  rather than opening the URL each time.
+- **Decision 0006.** Item 5's sketch holds: the route, the `Origin` check, JSON
+  with a `type`, 0-based rows, `hello`. This record settles its open points:
+  Arrow row ids, pulled from R, one server per scene. Two refinements: printing
+  a served view opens the URL only when no page is connected, and connected
+  pages follow a changed scene through `reload`, rather than a new tab opening
+  each time (item 5); and the `Origin` check allows, besides the page's own
+  origin, `http://H` and `https://H` for each `aobcore.serve_hosts` value `H`
+  (item 1), since an IDE proxy serves the page from its own origin. R's `hello`
+  carries the scene's `spec` version, as 0006 asked.
 - **Rules out** for now: a feature id column, selections as changes rather
   than whole, binary frames from the page, connections from any origin
   but the page's own (or a listed proxy's), and selection in embedded
@@ -556,8 +638,10 @@ belong in the implementation issues.
 
 ### Proposed issues (not filed)
 
-1. **aobcore: websocket route and its checks.** `/<token>/ws` with path,
-   `Host` and `Origin` checks in `onHeaders()` and again in `onWSOpen()`,
+1. **aobcore: websocket route and its checks.** Builds on the aobcore fix
+   made ahead of this record (every upgrade refused). `/<token>/ws` with
+   path, `Host` and `Origin` checks in `onHeaders()` and again, first, in
+   `onWSOpen()`, the `Origin` warnings,
    text only, the size cap, the connection cap, close codes, `stop()`
    closing sockets with 1001. Done when: the R tests above for refusals
    and close codes pass with a fake `ws`, and the real upgrade status
@@ -578,17 +662,19 @@ belong in the implementation issues.
 5. Later, each its own issue: box selection; a selection pushed from R
    (highlight); `layers` and blobs over the socket; the Shiny channel.
 
-## Open for Michael
+## Defaults chosen (Michael may revisit)
 
-None of these changes the project's goals; they are product choices an
-agent should not settle alone:
+Each is a default this record sets, with the alternative it passed over:
 
-- Whether served views make every vector layer selectable by default
-  (proposed), which changes what a click does on a served view (a
-  highlight even without a popup), or only when asked
-  (`view(x, select = TRUE)`).
-- Whether `wait_for_selection()` on an embedded view should serve it
-  (start a server and open a new tab, with a message) instead of the
-  proposed error.
-- Whether `view_add()` should clear the selection (proposed, until R can
-  push one) or keep the rows of layers that did not change.
+- **Every vector layer is selectable on a served view**
+  (`serve_scene(select = NULL)`, and aobview passes the default). A click
+  on a served view then highlights a feature even when the layer has no
+  popup. Alternative: selectable only when asked
+  (`view(x, select = TRUE)`), which leaves served views behaving as
+  today.
+- **`wait_for_selection()` on an embedded view is an error** that says to
+  use `transport = "serve"`. Alternative: serve the view there and then
+  (start a server and open a new tab, with a message).
+- **`view_add()` clears the selection**, until R can push a selection to
+  the page. Alternative: keep the rows of layers whose data did not
+  change, which needs R to page `select` to keep the page in step.
