@@ -522,6 +522,9 @@ producers write 0.6 only for scenes that use it.
   'httpuv' and 'jsonlite' packages)." On a served view whose server has
   stopped they are errors that say so, and `wait_for_selection()` with no
   page connected warns once that it is waiting for a page to connect.
+  (Amended 2026-10-01, from aobview#23: it says so in a message, not a
+  warning, once per server, since a warning would show only after the
+  wait has ended.)
 - **jsonlite missing.** Serving still works, the page carries no
   `data-aob-socket`, and `serve_scene()` says once per session that
   selections need jsonlite. The aobview functions error naming it.
@@ -789,6 +792,8 @@ Each is a default this record sets, with the alternative it passed over:
     greater than the page's.
   - Item 8: the backoff (1 s doubling to 30 s) resets only after R's
     `hello` and 5 s open; 1003, 1007, 1008 and 4000 are final; a 1013
-    close shows "too many pages are connected to R".
+    close shows "too many pages are connected to R"; `wait_for_selection()`
+    with no page connected says it is waiting in a message, once per
+    server, not a warning.
   - Testing: child R processes through `system2()`, not processx; the exit
     tests from aobcore#46.
