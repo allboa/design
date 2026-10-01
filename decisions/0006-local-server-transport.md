@@ -130,7 +130,14 @@ learns one attribute, for example `data-aob-blob-base="blob/"` on the page
 `<div>`. When a blob key has no `<script>` in the page and a base is set,
 `render()` fetches `<base><encoded key>`. Embedded pages are unchanged. A
 served layer has no tile blobs, so `tiles.js` takes its existing range
-path.
+path. A linked page also lists the keys the server delivers in one
+`<script type="application/json" data-aob-blob-keys>` (a key list, not a
+blob script), because a tile's blob key is implied by its byte range and
+the renderer cannot otherwise tell an embedded layer's tiles (served as
+blobs) from a served layer's (read by range). A tiled raster fetches a
+tile from the blob base only when its key is listed, and reads the COG
+by range otherwise; Arrow data references use the base for any blob the
+page does not carry. (Amended 2026-10-01, from aobcore#36.)
 
 Why keep `blob` keys rather than rewrite them to `url` references at serve
 time: both are valid 0.5 scenes, but keeping them means the scene document
@@ -177,8 +184,12 @@ Recommended: **a**. Concretely:
   them, do not change.
 - `scene_add_tiled_raster(embed = FALSE)` on a local COG records the file in
   an attribute of the scene (`attr(scene, "files")`, data id to a record of
-  path, size and modification time), as blobs are carried today. The JSON
-  never sees the path. `write_scene_html()` on such a scene writes the
+  path, size and modification time, and whether `url` was given
+  explicitly), as blobs are carried today. That registry is never written
+  to the scene JSON. The layer's `url` is another matter: unless the
+  caller gave one, it stays the file's `file://` URL, which holds the full
+  local path, until `serve_scene()` replaces it in the copy it serves.
+  `write_scene_html()` on such a scene writes the
   `file://` URL as today, with a warning that the page cannot read it from
   disk and needs `serve_scene()` or `embed = TRUE`.
 - `serve_scene()` sets each registered file's `url` to
@@ -188,14 +199,19 @@ Recommended: **a**. Concretely:
   token root, so they inherit the token without the scene knowing it.
   Embedded tile blobs in the same scene are served as blobs, so one scene
   may mix embedded and served layers.
-- **Unchanged files only.** Size and modification time are recorded at
-  registration. `serve_scene()` errors if a registered file has changed or
+- **Unchanged files only.** Size and modification time are recorded by
+  `cog_info()` when it reads the file, and `scene_add_tiled_raster()`
+  refuses a file that has changed or gone since, whether or not it embeds
+  (the registered record keeps `cog_info()`'s values). `serve_scene()` errors if a registered file has changed or
   gone since, and the file route checks again on each request: a changed
   file answers 409 and a missing one 404, each with a warning in R. A tile
   plan holds byte offsets, so a rewritten file would draw garbage otherwise.
 - **`/vsimem/` COGs are embed-only.** Base R cannot read them, and a served
   file must be a real path. `scene_add_tiled_raster(embed = FALSE)` on a
-  `/vsimem/` COG is an error that says to embed it or write it to disk.
+  `/vsimem/` COG with no `url` is an error that says to embed it or write
+  it to disk. With an explicit `url` it stays allowed, as before: the plan
+  is read from memory, the renderer goes to the caller's URL, and nothing
+  is registered. (Amended 2026-10-01, from aobcore#36.)
 
 The file route:
 
@@ -423,8 +439,9 @@ the first implementation issues.
   promises and R6. aobview's Imports do not change; httpuv is reached
   through aobcore.
 - **Scene spec.** No change. Served scenes validate as they do embedded.
-- **Renderer.** One page-loader attribute for fetching blobs by URL. The tile
-  path is unchanged. Rendering changes need the headless screenshots of the
+- **Renderer.** One page-loader attribute for fetching blobs by URL, plus
+  the key-list script (`data-aob-blob-keys`) that tells a tiled raster which
+  tiles the server has as blobs. The tile range path is unchanged. Rendering changes need the headless screenshots of the
   conformance scenes, light and dark, so the served page is screenshot too,
   with the EPSG:3031 COG fixture first (polar first).
 - **Embedding is unchanged.** Tile bytes are still read at add time when
@@ -457,9 +474,9 @@ the first implementation issues.
    `attr(scene, "files")`; `embed = TRUE` is unchanged.
    Done when: with `embed = TRUE` the page for the polar 3031 COG fixture
    is byte-identical to today, blob order included; with `embed = FALSE`
-   the scene has no tile blobs, one registered file and no local path in its
+   the scene has no tile blobs, one registered file and no registry in its
    JSON; `write_scene_html()` on it warns and writes the `file://` URL as
-   today; a `/vsimem/` COG with `embed = FALSE` errors. aobview tests: the
+   today; a `/vsimem/` COG with `embed = FALSE` and no `url` errors. aobview tests: the
    tile-blob checks (`tile_blobs()` in `tests/testthat/helper-terra.R`,
    line 32, and its use in `tests/testthat/test-view-terra.R`, line 89)
    keep passing unchanged, since embedded views still carry tile blobs.
@@ -517,3 +534,24 @@ the first implementation issues.
    settles the message types, row ids versus feature ids, how selections
    reach the R user, and one server per scene or per session, sketched in
    decision 0006 item 5.
+
+## Amendments
+
+- 2026-10-01, from the review of aobcore#36 (issues 1 to 3):
+  - Linked pages carry the served blob keys in a
+    `<script type="application/json" data-aob-blob-keys>`, and tiled
+    rasters fetch a tile from the blob base only for a listed key (item 1,
+    "Renderer change, not a spec change").
+  - `scene_add_tiled_raster(embed = FALSE)` on a `/vsimem/` COG with an
+    explicit `url` stays allowed and registers nothing; only the case with
+    no `url` errors (item 2).
+  - Wording: the file registry is never written to the scene JSON, but a
+    defaulted `url` is the `file://` URL, full path included, until
+    `serve_scene()` replaces it in the copy it serves (item 2). The earlier
+    text said "The JSON never sees the path", which was wrong for that
+    case. Issue 3's done-when and the Consequences now say the same.
+  - Size and modification time are recorded by `cog_info()`, and
+    `scene_add_tiled_raster()` refuses a file changed since, embedded or
+    not (item 2, "Unchanged files only").
+  - The `write_scene_html()` warning names `serve_scene()` once part B
+    (issues 4 to 6) ships; until then it says to serve the page over HTTP.
