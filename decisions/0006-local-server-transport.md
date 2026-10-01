@@ -95,7 +95,8 @@ Recommended: **a**. One function, with names open to change:
 srv <- serve_scene(scene, blobs = attr(scene, "blobs"),
                    files = attr(scene, "files"), port = NULL,
                    open = interactive(), title = NULL,
-                   theme = c("auto", "light", "dark"))
+                   theme = c("auto", "light", "dark"),
+                   server = NULL, own = NULL)
 srv$url    # "http://127.0.0.1:43817/3f9c...e1/"
 srv$stop()
 ```
@@ -120,7 +121,17 @@ characters. The page builds each blob URL as `<base>` plus
 the segment after `blob/` from the raw request path, decodes it once with
 `utils::URLdecode()` (which leaves `+` as `+`), and looks the result up by
 exact match in the scene's blob names. No file system is involved, and a
-key that does not match is 404.
+key that does not match is 404, as is a segment that does not decode
+(`%00`, which `URLdecode()` would truncate at, a malformed `%` escape, or
+invalid UTF-8). The keys `.` and `..` cannot be served: `encodeURIComponent`
+leaves dots alone, so they would be dot segments the browser resolves
+away. (Amended 2026-10-01, from aobcore#37.)
+
+Linked pages also carry `<link rel="icon" href="data:,">`, so the browser
+asks for no favicon outside the token, and
+`<meta name="referrer" content="no-referrer">`, so the token is not sent
+on in a `Referer`. Every response carries
+`X-Content-Type-Options: nosniff`. (Amended 2026-10-01, from aobcore#37.)
 
 The page builder is shared with `write_scene_html()` (one internal function
 with an "inline" and a "linked" mode), so the two transports cannot drift.
@@ -202,8 +213,9 @@ Recommended: **a**. Concretely:
 - **Unchanged files only.** Size and modification time are recorded by
   `cog_info()` when it reads the file, and `scene_add_tiled_raster()`
   refuses a file that has changed or gone since, whether or not it embeds
-  (the registered record keeps `cog_info()`'s values). `serve_scene()` errors if a registered file has changed or
-  gone since, and the file route checks again on each request: a changed
+  (the registered record keeps `cog_info()`'s values). `serve_scene()`
+  errors if a registered file has changed or gone since, and the file
+  route checks again on each request: a changed
   file answers 409 and a missing one 404, each with a warning in R. A tile
   plan holds byte offsets, so a rewritten file would draw garbage otherwise.
 - **`/vsimem/` COGs are embed-only.** Base R cannot read them, and a served
@@ -228,7 +240,13 @@ The file route:
   length does not match.
 - A multi-range request: 416 rather than the whole file, since the renderer
   never sends one and a silent 200 of a large file is the costly case.
-- `HEAD`: the headers of the matching `GET` with no body.
+- A malformed `bytes=` value (`bytes=5-2`, `bytes=-0`, `bytes=abc`): 416,
+  like any range that cannot be answered exactly. A `Range` in another
+  unit is ignored (200), as HTTP says; the unit is matched without regard
+  to case.
+  (Amended 2026-10-01, from aobcore#37.)
+- `HEAD`: the headers of the matching `GET`, with an explicit
+  `Content-Length`, and no body.
 
 **httpuv `staticPaths` are not used.** They serve from httpuv's background
 thread, so they would keep working while R is busy, but they do not handle
@@ -255,23 +273,36 @@ browser, by any web page the user has open. Recommended, all together:
   relative URLs (the COG and blob routes) keep the path directory and drop
   the query. A wrong or missing token answers 404, the same as an unknown
   route.
-- **Token source.** 16 bytes from `/dev/urandom` (Linux, macOS). Where it
-  does not exist (Windows), a fallback: the MD5 (`tools::md5sum()` of a
-  temporary file) of the time to the microsecond, the process id,
-  `proc.time()`, a `tempfile()` name and the address of a fresh environment.
+- **Token source.** 16 bytes from `/dev/urandom`, read only on a Unix-alike
+  (Linux, macOS): on Windows that path is `C:\dev\urandom`, a file any
+  local user could create with fixed bytes. Elsewhere (Windows), a
+  fallback: a hash of the time to the microsecond, the process id,
+  `proc.time()`, a `tempfile()` name, the address of a fresh environment
+  and a call counter. The hash is four 32-bit FNV-1a lanes over the
+  serialized inputs, written in base R, rather than `tools::md5sum()`,
+  so that `tools` does not have to be declared in Imports; neither is
+  cryptographic, and the inputs, not the hash, set the strength.
   This is weaker: someone on the same machine who knows roughly when the
   server started and its process id can narrow the guesses a lot, so it
   guards against other web pages far better than against other local
   users. The fallback says so in a message each time it is used. A
   stronger Windows source (for example the openssl package) would be a
   new Suggests and is left to a later decision. Neither source uses R's
-  RNG, so a server never changes `.Random.seed` and `set.seed()` cannot make
-  the token predictable.
+  RNG, so `set.seed()` cannot make the token predictable. httpuv's
+  `startServer()` itself draws from R's RNG, so `serve_scene()` saves
+  `.Random.seed` before httpuv calls and restores it after (leaving it
+  absent if it was absent): a server never changes `.Random.seed`.
+  (Amended 2026-10-01, from aobcore#37.)
 - **Random port without R's RNG.** `httpuv::randomPort()` calls `sample()`,
   which changes `.Random.seed` and repeats after `set.seed()`. Instead,
-  candidate ports are drawn from the same random bytes as the token, in
-  the range 20000 to 60000, and tried with `httpuv::startServer()` until one
-  binds (up to 20 tries). `port` overrides this.
+  candidate ports are drawn from a second, separate draw from the same
+  source, in the range 20000 to 60000, and tried with
+  `httpuv::startServer()` until one binds (up to 20 tries). `port`
+  overrides this. With `/dev/urandom` a visible port says nothing about the
+  token. With the fallback both are hashes of nearly the same guessable
+  inputs, so a visible port helps guess the token; the help says the
+  fallback does not resist other local users.
+  (Amended 2026-10-01, from aobcore#37.)
 - **Host check.** A request whose `Host` is not `127.0.0.1:<port>` or
   `localhost:<port>` gets 403. This blocks DNS rebinding, where a remote page
   points its own name at 127.0.0.1. An IDE proxy (RStudio Server, Posit
@@ -280,7 +311,11 @@ browser, by any web page the user has open. Recommended, all together:
   look like they run on a remote server. So the check is defence in depth,
   and `getOption("aobcore.serve_hosts")` lists further `Host` values to
   allow (for example the proxy's host name). A 403 warns in R with the
-  `Host` it saw and names the option.
+  `Host` it saw and names the option, saying to allow it only if it is the
+  IDE proxy's host. The `Host` is the requester's bytes, so the warning
+  shows it escaped (printable ASCII only, other bytes as `\xNN`) and cut
+  to 80 bytes, and warns once per distinct `Host` per server.
+  (Amended 2026-10-01, from aobcore#37.)
 - **No CORS headers**, so other origins cannot read responses.
 - **Registered files only.** The file route looks up `<data id>` in the
   scene's registered files and requires `<base name>` to equal that file's
@@ -315,7 +350,14 @@ The handle, of class `"aob_server"`:
   running server with the same URL and token (`serve_scene(scene, server =
   srv)`). This is what `view_add()` uses on a served view.
 - `stop()` is idempotent. It also deletes any temporary files the server was
-  asked to own (aobview's temporary COGs, below).
+  asked to own (aobview's temporary COGs, below), given as
+  `serve_scene(own = )`. Each must exist and be a regular file, not a
+  symbolic link (whose target would be deleted), and is kept by absolute
+  path with its size and modification time; it is deleted only if those
+  are unchanged, and left with a warning otherwise. Owned files are left
+  behind after a crash or SIGTERM, and two servers owning one path
+  conflict (the first to stop deletes it).
+  (Amended 2026-10-01, from aobcore#37.)
 - aobcore keeps a registry of running servers. `scene_servers()` lists them
   and `stop_scene_servers()` stops them all.
 - All servers stop when the session ends (a finalizer on the registry with
@@ -441,7 +483,8 @@ the first implementation issues.
 - **Scene spec.** No change. Served scenes validate as they do embedded.
 - **Renderer.** One page-loader attribute for fetching blobs by URL, plus
   the key-list script (`data-aob-blob-keys`) that tells a tiled raster which
-  tiles the server has as blobs. The tile range path is unchanged. Rendering changes need the headless screenshots of the
+  tiles the server has as blobs. The tile range path is unchanged.
+  Rendering changes need the headless screenshots of the
   conformance scenes, light and dark, so the served page is screenshot too,
   with the EPSG:3031 COG fixture first (polar first).
 - **Embedding is unchanged.** Tile bytes are still read at add time when
@@ -476,10 +519,11 @@ the first implementation issues.
    is byte-identical to today, blob order included; with `embed = FALSE`
    the scene has no tile blobs, one registered file and no registry in its
    JSON; `write_scene_html()` on it warns and writes the `file://` URL as
-   today; a `/vsimem/` COG with `embed = FALSE` and no `url` errors. aobview tests: the
-   tile-blob checks (`tile_blobs()` in `tests/testthat/helper-terra.R`,
-   line 32, and its use in `tests/testthat/test-view-terra.R`, line 89)
-   keep passing unchanged, since embedded views still carry tile blobs.
+   today; a `/vsimem/` COG with `embed = FALSE` and no `url` errors.
+   aobview tests: the tile-blob checks (`tile_blobs()` in
+   `tests/testthat/helper-terra.R`, line 32, and its use in
+   `tests/testthat/test-view-terra.R`, line 89) keep passing unchanged,
+   since embedded views still carry tile blobs.
 4. **aobcore: `serve_scene()` with httpuv in Suggests.** Routes as in
    decision 0006 item 1, loopback only, port and token without R's RNG, Host
    check with `aobcore.serve_hosts`, the `/<token>` redirect, blob content
@@ -555,3 +599,17 @@ the first implementation issues.
     not (item 2, "Unchanged files only").
   - The `write_scene_html()` warning names `serve_scene()` once part B
     (issues 4 to 6) ships; until then it says to serve the page over HTTP.
+- 2026-10-01, from the review of aobcore#37 (issues 4 to 6):
+  - `serve_scene()` takes `server =` (replace the scene on a running
+    server) and `own =` (files the server deletes on stop, under the rules
+    in item 4).
+  - The fallback token hash is FNV-1a in base R, not `tools::md5sum()`;
+    `/dev/urandom` is read only on a Unix-alike.
+  - Ports come from a draw separate from the token's; with the fallback a
+    visible port is still a hint to the token.
+  - `.Random.seed` is saved and restored around httpuv calls.
+  - A malformed `bytes=` range gets 416; range units are case-insensitive.
+  - Linked pages carry a `data:` favicon and a no-referrer policy;
+    responses carry `nosniff`; `HEAD` has no body; undecodable segments
+    and the blob keys `.` and `..` are refused; the `Host` warning is
+    escaped, cut short and given once per `Host`.
