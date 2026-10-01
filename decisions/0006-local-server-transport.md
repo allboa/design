@@ -356,7 +356,10 @@ The handle, of class `"aob_server"`:
   path with its size and modification time; it is deleted only if those
   are unchanged, and left with a warning otherwise. Owned files are left
   behind after a crash or SIGTERM, and two servers owning one path
-  conflict (the first to stop deletes it).
+  conflict (the first to stop deletes it). Links are detected with
+  `Sys.readlink()` and, because that always returns "" on Windows, also by
+  resolving the path and comparing it with its resolved directory plus its
+  name, which catches symlinks and junctions.
   (Amended 2026-10-01, from aobcore#37.)
 - aobcore keeps a registry of running servers. `scene_servers()` lists them
   and `stop_scene_servers()` stops them all.
