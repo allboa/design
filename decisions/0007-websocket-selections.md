@@ -385,6 +385,7 @@ aobcore, on the `"aob_server"` handle (names open to change):
   (Amended 2026-10-01, from aobcore#43.)
 - `srv$on(type, f)`: calls `f(message)` for each message of that type and
   returns a function that removes it; an error in `f` becomes a warning.
+  `type` may also be `"hello"`. (Amended 2026-10-01, from aobcore#43.)
 - `srv$connections()`: how many pages are connected.
 
 aobview, for the user:
@@ -483,6 +484,11 @@ As built (amended 2026-10-01, from aobcore#43 and aobcore#44):
   0.5 popup still opens as today for the clicked feature. Selected features
   are drawn highlighted, light and dark; how is the renderer's choice.
   Keyboard selection follows the popup's, when that exists.
+  (Amended 2026-10-01, from aobcore#44: a Shift or Cmd click edits the
+  selection and hides the popup rather than opening one; a Shift or Cmd
+  click on nothing keeps the selection instead of clearing it. A click on
+  a feature of a layer that is not selectable counts as a click on
+  nothing: it sends `click` with no items and clears the selection.)
 - Box selection (Shift and drag) is wanted but is a renderer follow-up; its
   messages are `select` with `trigger: "box"`, so the protocol does not
   change. Lasso is later still, and needs no protocol change either: the
@@ -784,12 +790,16 @@ Each is a default this record sets, with the alternative it passed over:
     callback; `wait()` takes `"select"` or `"view"`; `selection()` also
     carries `trigger` and `scene` attributes; `wait_for_selection()` does
     not drain before waiting, so a selection made while R was busy counts
-    as the next one.
+    as the next one; `srv$on()` also accepts `"hello"`.
   - Item 5: `view_state()` is kept when the scene is replaced (only the
     selection clears); the camera is kept in `sessionStorage` under a
     64-bit hash of the page's path, restored only from an older serial with
     the same view type and CRS; a `reload` is followed only for a serial
     greater than the page's.
+  - Item 6: a Shift or Cmd click hides the popup instead of opening it,
+    and on nothing keeps the selection; a click on a feature of a layer
+    that is not selectable counts as a click on nothing (`click`, no
+    items, clears).
   - Item 8: the backoff (1 s doubling to 30 s) resets only after R's
     `hello` and 5 s open; 1003, 1007, 1008 and 4000 are final; a 1013
     close shows "too many pages are connected to R"; `wait_for_selection()`
