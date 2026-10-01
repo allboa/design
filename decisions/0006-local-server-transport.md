@@ -315,7 +315,11 @@ browser, by any web page the user has open. Recommended, all together:
   IDE proxy's host. The `Host` is the requester's bytes, so the warning
   shows it escaped (printable ASCII only, other bytes as `\xNN`) and cut
   to 80 bytes, and warns once per distinct `Host` per server.
-  (Amended 2026-10-01, from aobcore#37.)
+  (Amended 2026-10-01, from aobcore#37.) Those warnings are given for the
+  first 5 distinct `Host` values per server, then once more to say further
+  refusals are not shown, so a client cycling through names can neither
+  flood the console nor grow the record. (Amended 2026-10-01, from
+  aobcore#43.)
 - **No CORS headers**, so other origins cannot read responses.
 - **Registered files only.** The file route looks up `<data id>` in the
   scene's registered files and requires `<base name>` to equal that file's
@@ -367,6 +371,14 @@ The handle, of class `"aob_server"`:
   `onexit = TRUE`) and when aobcore is unloaded. Losing the handle does not
   stop the server; the registry keeps it, so a page in a browser does not go
   blank at a garbage collection.
+- **At exit, sockets are forgotten, not closed.** When R exits, the
+  finalizer drops each connected page's socket from the server's record
+  without calling it, then stops the server: httpuv finalizes each socket's
+  handle at exit too, and may already have done so, and `ws$close()` on a
+  freed handle crashed R (httpuv 1.6.17). The pages see the connection end
+  without a close frame. `stop()`, `stop_scene_servers()` and unloading
+  aobcore during a session still close every socket with 1001 first.
+  (Amended 2026-10-01, from aobcore#46.)
 - httpuv serves through the `later` event loop, so requests are answered
   only when R is idle at the prompt; a long computation stalls the page
   until it finishes. In `Rscript` the script ends and the server with it;
@@ -396,6 +408,17 @@ Recommended: **c**:
   that names the size and says a server is now running. Over the threshold
   without httpuv, or in a non-interactive session, the layer is embedded
   with a warning naming the size (and httpuv when it is missing).
+- **What each `transport` does, as built** (Amended 2026-10-01, from
+  aobview#19):
+  - `"serve"` serves any view, a vector-only one included, and is an error
+    before any work is done when httpuv is not installed.
+  - An explicit `"embed"` embeds whatever the size, with no warning over
+    the threshold.
+  - `view_add(transport = "embed")` on a served view embeds that layer's
+    tiles (served to the page as blobs), and the view stays served.
+  - A COG GDAL reads from a `/vsi` path (in memory, or not a plain file) is
+    always embedded, since a server cannot deliver it; on a served view, or
+    with `"serve"`, that comes with a warning naming the size.
 - **Why 32 MiB.** Base64 makes embedded bytes a third larger, so 32 MiB of
   tiles is about 43 MiB of page; 64 MiB would be about 85 MiB, which
   browsers and IDE viewers load slowly. The threshold is an option, so the
@@ -407,18 +430,29 @@ Recommended: **c**:
   (`file.path(tempdir(), "aobview-cogs")`), is not deleted when the layer is
   added, and is handed to the server to own: it is deleted on `stop()`, and
   in any case when R removes its temporary directory at exit. An embedded
-  layer's temporary COG is deleted at add time, as today.
+  layer's temporary COG is deleted at add time, as today. Every temporary
+  COG, embedded or served, is written to that directory, since whether it
+  is served is decided only after it is written and planned. (Amended
+  2026-10-01, from aobview#19.)
 - **The view object.** An embedded view is as today: `v$file` is the page and
   `v$server` is `NULL`. A served view has `v$server` (the handle) and
   `v$file = NULL`; printing it opens `v$server$url` in the viewer or the
   browser. IDE viewers accept `http://127.0.0.1` URLs, so the `in_tmp`
-  rule in `open_page()` does not apply to them.
+  rule in `open_page()` does not apply to them. A `file =` given for a
+  served view is not written, with a warning that the view is served and
+  that `transport = "embed"` gives a page on disk. (Amended 2026-10-01,
+  from aobview#19.)
 - **`view_add()` works on both.** On an embedded view it adds layers and
   rewrites the page as today, unless a new layer crosses the threshold:
   then the view becomes served as above (the page already on disk stays,
   and the server serves the earlier layers' embedded blobs as blobs). On a
   served view it adds layers (new local COGs with `embed = FALSE`), replaces
   the scene on the same server, keeps the URL, and opens the page again.
+  On a served view whose server has stopped, `view_add()` serves the view
+  on a new server (a new URL), with a message saying so; it is an error,
+  saying to make the view again with `view()`, when a file the scene
+  registered is gone, as a temporary COG is once its server has stopped.
+  (Amended 2026-10-01, from aobview#19.)
 - An auto-served view leaves a server running until `v$server$stop()`,
   `aobcore::stop_scene_servers()` or the end of the session. The message
   that announces serving says this.
@@ -616,3 +650,26 @@ the first implementation issues.
     responses carry `nosniff`; `HEAD` has no body; undecodable segments
     and the blob keys `.` and `..` are refused; the `Host` warning is
     escaped, cut short and given once per `Host`.
+- 2026-10-01, from aobcore#43 (decision 0007's websocket, issues 1 and 2):
+  - `Host` refusal warnings are capped at 5 distinct values per server,
+    then one saying further refusals are not shown (item 3).
+- 2026-10-01, from aobview#19 (`transport` in `view()`, aobview#20 item 6),
+  all in item 4:
+  - `"serve"` serves any view, vector-only included, and errors before
+    any work without httpuv; an explicit `"embed"` over the threshold
+    gives no warning.
+  - `view_add(transport = "embed")` on a served view embeds that layer,
+    and the view stays served.
+  - A `/vsi` COG is always embedded, with a warning when the view is
+    served or `"serve"` was asked for.
+  - `file =` on a served view is not written, with a warning.
+  - `view_add()` on a view whose server has stopped serves it on a new
+    server with a message, and errors if a registered file (a temporary
+    COG deleted by that stop) is gone.
+  - Every temporary COG, embedded or served, is written to
+    `file.path(tempdir(), "aobview-cogs")`.
+- 2026-10-01, from aobcore#46:
+  - At R exit the finalizer forgets each page's socket without closing it
+    (httpuv may already have freed its handle, and closing then crashed
+    R), then stops the server; `stop()`, `stop_scene_servers()` and
+    unloading aobcore still close each socket with 1001 (item 4).
