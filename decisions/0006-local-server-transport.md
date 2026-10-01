@@ -24,9 +24,11 @@ fixed set of routes: the page, the renderer bundle, the scene's Arrow blobs
 and the local files the scene registered, the files with HTTP Range support.
 The scene document is the same one the embed transport writes. Blob keys stay
 blob keys, and a local COG's `url` is a relative URL under the server root,
-so **no scene spec change is needed**. `view()` keeps embedding by default
-and serves only when the local raster bytes it would embed pass a size
-threshold, or when asked. The websocket path (selections and live updates)
+so **no scene spec change is needed**. Embedding keeps reading tile bytes
+when the layer is added, as today; a layer meant for serving registers its
+file instead. `view()` keeps embedding by default and decides to serve
+before it adds a raster layer, when the planned local bytes pass a size
+threshold or when asked. The websocket path (selections and live updates)
 is a separate, later decision.
 
 ## What exists today
@@ -41,17 +43,24 @@ is a separate, later decision.
   The cog reference's `url` is then the file's base name, a page-relative URL,
   so a shared page does not reveal the local directory. Its documentation
   already says the base name "works when the COG is served beside it", and
-  suggests serving over HTTP for a large local COG.
+  suggests serving over HTTP for a large local COG. A `/vsimem/` COG counts
+  as local (`cog_info()`), so it can be embedded.
 - The renderer (`js/src/tiles.js`) uses a tile's blob when the page has one
   and otherwise calls `rangeReader()`, which sends
   `Range: bytes=<offset>-<offset+length-1>`. A server that answers 200
   instead of 206 has its whole body fetched once and sliced, which is fine
-  for a small file and very bad for a large one. A page opened from `file://`
-  cannot range-request, which is why local COGs are embedded.
+  for a small file and very bad for a large one. A tile whose bytes are not
+  exactly `byte_length` long is an error (`tiles.js`, after the fetch). A
+  page opened from `file://` cannot range-request, which is why local COGs
+  are embedded.
 - Arrow data references (`js/src/index.js`, `loadBytes()`) use the delivered
   blob for `blob` and `fetch(ref.url)` for `url`.
 - aobview's terra method writes a temporary COG for anything that is not
-  already a usable COG, and deletes it once the page is written.
+  already a usable COG, and deletes it as soon as the layer is added
+  (`R/view-terra.R`, `on.exit(unlink(temp$dsn))`), because the tile bytes
+  are already in the scene. `finish_view()` writes the page after that, and
+  `view_add()` rewrites the page later still, so both rely on the bytes
+  having been read at add time.
 
 Scene spec 0.5 already covers a served scene:
 
@@ -74,16 +83,18 @@ Options:
 - b. httpuv in Imports. Rejected: it breaks the lean-Imports rule for a
   transport many users never need.
 - c. A separate package (`aobserve`) for transports. Rejected for now: one
-  function and about 300 lines do not justify a repo, and the page builder,
-  blob checks and renderer bundle it needs are aobcore internals. Revisit if
-  the websocket and Shiny transports make it large.
+  function and a few hundred lines do not justify a repo, and the page
+  builder, blob checks and renderer bundle it needs are aobcore internals.
+  Revisit if the websocket and Shiny transports make it large.
 - d. R's internal help server (`tools::startDynamicHelp`). Rejected: not a
   public API.
 
 Recommended: **a**. One function, with names open to change:
 
 ```r
-srv <- serve_scene(scene, port = NULL, open = interactive(), title = NULL,
+srv <- serve_scene(scene, blobs = attr(scene, "blobs"),
+                   files = attr(scene, "files"), port = NULL,
+                   open = interactive(), title = NULL,
                    theme = c("auto", "light", "dark"))
 srv$url    # "http://127.0.0.1:43817/3f9c...e1/"
 srv$stop()
@@ -95,11 +106,21 @@ Routes, all under `/<token>/`:
 | --- | --- | --- |
 | `` (the token root) and `index.html` | the page: same builder as `write_scene_html()`, scene JSON inline, renderer by `src`, no blob scripts | `text/html` |
 | `aob-renderer.min.js` | the bundled renderer, read once | `text/javascript` |
-| `blob/<key>` | one Arrow IPC blob from the scene | `application/vnd.apache.arrow.stream` |
+| `blob/<encoded key>` | one Arrow IPC blob from the scene | by the format of the data reference that names it: `application/vnd.apache.arrow.stream` for `arrow-ipc-stream`, `application/vnd.apache.arrow.file` for `arrow-ipc-file` |
 | `files/<data id>/<base name>` | one registered local file, with Range | `image/tiff` for a COG, else `application/octet-stream` |
 
-Anything else is 404. Only `GET` and `HEAD` are answered; other methods get
-405. Responses carry `Cache-Control: no-cache` and no CORS headers.
+`/<token>` without the trailing slash answers 301 to `/<token>/`, so the
+relative routes resolve under the token. Anything else is 404. Only `GET`
+and `HEAD` are answered; other methods get 405. Responses carry
+`Cache-Control: no-cache` and no CORS headers.
+
+**Blob keys in URLs.** Keys may contain `/`, `@`, `+` and other reserved
+characters. The page builds each blob URL as `<base>` plus
+`encodeURIComponent(key)`, so the key is one path segment. The server takes
+the segment after `blob/` from the raw request path, decodes it once with
+`utils::URLdecode()` (which leaves `+` as `+`), and looks the result up by
+exact match in the scene's blob names. No file system is involved, and a
+key that does not match is 404.
 
 The page builder is shared with `write_scene_html()` (one internal function
 with an "inline" and a "linked" mode), so the two transports cannot drift.
@@ -107,14 +128,20 @@ with an "inline" and a "linked" mode), so the two transports cannot drift.
 **Renderer change, not a spec change.** The page loader (`fromPage()`)
 learns one attribute, for example `data-aob-blob-base="blob/"` on the page
 `<div>`. When a blob key has no `<script>` in the page and a base is set,
-`render()` fetches `<base><encoded key>`. Embedded pages are unchanged. Tile
-blobs are simply absent in a served page, so `tiles.js` takes its existing
-range path.
+`render()` fetches `<base><encoded key>`. Embedded pages are unchanged. A
+served layer has no tile blobs, so `tiles.js` takes its existing range
+path.
 
 Why keep `blob` keys rather than rewrite them to `url` references at serve
 time: both are valid 0.5 scenes, but keeping them means the scene document
 is byte-identical whatever the transport, and the websocket transport (item
 5) can later push blobs under the same keys.
+
+**Plain-list scenes.** A scene given as a plain list carries no attributes,
+so `serve_scene()` takes `blobs` and `files` arguments, as
+`write_scene_html()` takes `blobs`. A `cog` reference with a relative `url`
+and no registered file and no tile blobs is an error that names the data id,
+since the page could never fetch it.
 
 ### 2. Local file serving
 
@@ -131,39 +158,67 @@ Options for how a scene refers to a served file:
   provides". Rejected: `url` already says what the renderer needs, and a
   local path in the scene would reveal the user's directories.
 
+Recommended: **a**.
+
+Options for when an embedded layer's tile bytes are read:
+
+- **a. At add time, as today.** The caller (aobview) decides embed or serve
+  before adding the layer. A temporary COG can still be deleted right after
+  an embedded layer is added.
+- b. At write time, from a registered file. Rejected: aobview deletes its
+  temporary COG once the layer is added, and `finish_view()` and
+  `view_add()` write the page after that, so `view(in_memory_raster)` would
+  break unless every temporary COG lived as long as the view.
+
 Recommended: **a**. Concretely:
 
-- `scene_add_tiled_raster()` records each local COG's path in an attribute
-  of the scene (`attr(scene, "files")`, data id to path), as blobs are
-  carried today. The JSON never sees the path.
-- Reading tile bytes for embedding moves from add time to write time:
-  `write_scene_html()` reads the planned ranges from the recorded file, and
-  `serve_scene()` does not read them at all. So one scene can go to either
-  transport, and choosing to serve costs no copy. `embed` on
-  `scene_add_tiled_raster()` keeps its meaning for a page written to disk;
-  `serve_scene()` ignores it (with a message when it was `TRUE` explicitly).
+- `scene_add_tiled_raster(embed = TRUE)` is unchanged: it reads the planned
+  ranges and carries tile blobs. Embedded pages, and the blob order in
+  them, do not change.
+- `scene_add_tiled_raster(embed = FALSE)` on a local COG records the file in
+  an attribute of the scene (`attr(scene, "files")`, data id to a record of
+  path, size and modification time), as blobs are carried today. The JSON
+  never sees the path. `write_scene_html()` on such a scene writes the
+  `file://` URL as today, with a warning that the page cannot read it from
+  disk and needs `serve_scene()` or `embed = TRUE`.
 - `serve_scene()` sets each registered file's `url` to
   `files/<data id>/<URL-encoded base name>` in the copy it serves, unless the
   caller gave an explicit `url` (which is then left alone, so a remote COG
   stays remote). Relative URLs resolve against the page, which sits at the
   token root, so they inherit the token without the scene knowing it.
-- The file route answers a single range (`bytes=a-b`, `bytes=a-`,
-  `bytes=-n`) with 206, `Content-Range` and `Accept-Ranges: bytes`; a range
-  past the end with 416; no `Range` header with 200 and the whole file; and
-  `HEAD` with the length and no body. A multi-range request gets 416 rather
-  than the whole file, since the renderer never sends one and a silent 200
-  of a large file is the costly case. Each read is capped (64 MiB by default)
-  so one request cannot make R allocate the whole file.
-- Bytes are read with base R (`file()`, `seek()`, `readBin()`) in the R
-  request handler. gdalraster is not needed to serve, so a plain local file
-  works without it.
+  Embedded tile blobs in the same scene are served as blobs, so one scene
+  may mix embedded and served layers.
+- **Unchanged files only.** Size and modification time are recorded at
+  registration. `serve_scene()` errors if a registered file has changed or
+  gone since, and the file route checks again on each request: a changed
+  file answers 409 and a missing one 404, each with a warning in R. A tile
+  plan holds byte offsets, so a rewritten file would draw garbage otherwise.
+- **`/vsimem/` COGs are embed-only.** Base R cannot read them, and a served
+  file must be a real path. `scene_add_tiled_raster(embed = FALSE)` on a
+  `/vsimem/` COG is an error that says to embed it or write it to disk.
 
-Not chosen for v1: httpuv's `staticPaths`, which serve from httpuv's
-background thread and so keep working while R is busy. They serve
-directories, not single files, so they would need a per-scene directory of
-links to the registered files (fragile on Windows), and whether they honour
-Range has not been checked. This is the first thing to revisit if a busy R
-session stalls the page (see Consequences).
+The file route:
+
+- No `Range` header: 200 with `body = list(file = path)`, which httpuv
+  sends from the file itself (`bodyFile`), so R never reads the file into
+  memory.
+- A single range (`bytes=a-b`, `bytes=a-`, `bytes=-n`): 206 with
+  `Content-Range`, `Accept-Ranges: bytes` and exactly those bytes, read with
+  base R (`file()`, `seek()`, `readBin()`) in the request handler.
+  gdalraster is not needed to serve.
+- A range past the end: 416.
+- A range longer than the cap (64 MiB by default, far above any tile): 416.
+  A shorter 206 is not an option, since the renderer rejects a tile whose
+  length does not match.
+- A multi-range request: 416 rather than the whole file, since the renderer
+  never sends one and a silent 200 of a large file is the costly case.
+- `HEAD`: the headers of the matching `GET` with no body.
+
+**httpuv `staticPaths` are not used.** They serve from httpuv's background
+thread, so they would keep working while R is busy, but they do not handle
+Range requests (httpuv's static file handler in `webapplication.cpp`
+answers the whole file), and they serve directories rather than single
+files. Every file request therefore goes through the R handler.
 
 **Spec change: none.** `cogRef.url` and `arrowRef.url` are already
 scene-relative `uri-reference`s, `cogRef` already requires a server that
@@ -178,28 +233,47 @@ A local server is reachable by every process on the machine and, through the
 browser, by any web page the user has open. Recommended, all together:
 
 - **Loopback only.** Bind `127.0.0.1`, never `0.0.0.0`. No argument to change
-  the host in this milestone (remote use is out of scope).
-- **Random port** from `httpuv::randomPort()` unless `port` is given.
+  the bind address in this milestone (remote use is out of scope).
 - **Random token in the path**, 128 bits as 32 hex characters: every route is
   under `/<token>/`. A path token rather than a query token, because
   relative URLs (the COG and blob routes) keep the path directory and drop
   the query. A wrong or missing token answers 404, the same as an unknown
-  route. The token comes from `/dev/urandom` where it exists, with a
-  fallback that does not use R's RNG either, so the server never changes
-  `.Random.seed` and a `set.seed()` cannot make the token predictable.
+  route.
+- **Token source.** 16 bytes from `/dev/urandom` (Linux, macOS). Where it
+  does not exist (Windows), a fallback: the MD5 (`tools::md5sum()` of a
+  temporary file) of the time to the microsecond, the process id,
+  `proc.time()`, a `tempfile()` name and the address of a fresh environment.
+  This is weaker: someone on the same machine who knows roughly when the
+  server started and its process id can narrow the guesses a lot, so it
+  guards against other web pages far better than against other local
+  users. The fallback says so in a message each time it is used. A
+  stronger Windows source (for example the openssl package) would be a
+  new Suggests and is left to a later decision. Neither source uses R's
+  RNG, so a server never changes `.Random.seed` and `set.seed()` cannot make
+  the token predictable.
+- **Random port without R's RNG.** `httpuv::randomPort()` calls `sample()`,
+  which changes `.Random.seed` and repeats after `set.seed()`. Instead,
+  candidate ports are drawn from the same random bytes as the token, in
+  the range 20000 to 60000, and tried with `httpuv::startServer()` until one
+  binds (up to 20 tries). `port` overrides this.
 - **Host check.** A request whose `Host` is not `127.0.0.1:<port>` or
   `localhost:<port>` gets 403. This blocks DNS rebinding, where a remote page
-  points its own name at 127.0.0.1.
+  points its own name at 127.0.0.1. An IDE proxy (RStudio Server, Posit
+  Workbench, code-server, jupyter-server-proxy) may forward requests with
+  its own `Host`, which would fail every request, and Michael's sessions
+  look like they run on a remote server. So the check is defence in depth,
+  and `getOption("aobcore.serve_hosts")` lists further `Host` values to
+  allow (for example the proxy's host name). A 403 warns in R with the
+  `Host` it saw and names the option.
 - **No CORS headers**, so other origins cannot read responses.
 - **Registered files only.** The file route looks up `<data id>` in the
   scene's registered files and requires `<base name>` to equal that file's
   base name exactly; the path on disk comes from the registry, never from
-  the URL. So `..`, encoded `%2e%2e`, `%2f`, absolute paths, symlink tricks
-  and other files in the same directory have nothing to resolve. There is no
-  directory listing anywhere.
-- Paths are normalized with `normalizePath(mustWork = TRUE)` when the scene
-  is served, and a file that has gone missing answers 404 with a warning in
-  R.
+  the URL. So `..`, encoded `%2e%2e`, `%2f`, absolute paths and other files
+  in the same directory have nothing to resolve. There is no directory
+  listing anywhere.
+- Paths are normalized with `normalizePath(mustWork = TRUE)` at
+  registration.
 
 The token is a guard against other local users and other web pages, not
 authentication: anyone who sees the URL (shell history, a screen share) can
@@ -221,6 +295,9 @@ The handle, of class `"aob_server"`:
 
 - `url`, `port`, `token`, and `stop()`; `print()` shows the URL, the number
   of blobs and files, and whether it is running.
+- The scene it serves lives in an environment, so it can be replaced on the
+  running server with the same URL and token (`serve_scene(scene, server =
+  srv)`). This is what `view_add()` uses on a served view.
 - `stop()` is idempotent. It also deletes any temporary files the server was
   asked to own (aobview's temporary COGs, below).
 - aobcore keeps a registry of running servers. `scene_servers()` lists them
@@ -230,8 +307,9 @@ The handle, of class `"aob_server"`:
   stop the server; the registry keeps it, so a page in a browser does not go
   blank at a garbage collection.
 - httpuv serves through the `later` event loop, so requests are answered
-  when R is idle at the prompt. In `Rscript` the script ends and the server
-  with it; `serve_scene()` warns when the session is not interactive.
+  only when R is idle at the prompt; a long computation stalls the page
+  until it finishes. In `Rscript` the script ends and the server with it;
+  `serve_scene()` warns when the session is not interactive.
 
 How aobview's `view()` chooses (options):
 
@@ -239,33 +317,57 @@ How aobview's `view()` chooses (options):
 - b. Always serve. Loses the page that opens from disk, offline, a week
   later, which is the reproducible default the project started with.
 - **c. Embed by default; serve when the local bytes to embed pass a
-  threshold, or when asked.**
+  threshold, or when asked, decided before each raster layer is added.**
 
 Recommended: **c**:
 
-- A `transport` argument to `view()`, `"auto"` (default), `"embed"` or
-  `"serve"`, with its default from `getOption("aobview.transport", "auto")`.
-- `"auto"` sums the planned tiles' `byte_length` for every local COG (known
-  from the plan before any byte is read). At or under
-  `getOption("aobview.embed_max", 64 * 2^20)` bytes it embeds. Over it, in an
-  interactive session with httpuv installed, it serves and says so in a
-  message. Over it without httpuv, it embeds and warns, naming httpuv and the
-  size. Over it in a non-interactive session it embeds and warns. Vectors
-  alone never trigger serving in this milestone (their blobs are already in
-  memory; the size question for them is a later one).
-- A served view returns the same `"aob_view"` object with a `server` element
-  and no `file`; printing it opens `server$url` in the viewer or browser.
-  IDE viewers accept `http://127.0.0.1` URLs (RStudio's viewer also proxies
-  them on RStudio Server), so the `in_tmp` rule in `open_page()` does not
-  apply.
-- A temporary COG that aobview wrote is handed to the server to own and is
-  deleted on `stop()` or session end, not after the page is written.
+- A `transport` argument to `view()` and `view_add()`, `"auto"` (default),
+  `"embed"` or `"serve"`, with its default from
+  `getOption("aobview.transport", "auto")`.
+- The decision is made per local COG layer, after `cog_plan()` and before
+  `scene_add_tiled_raster()`, from the plan's `byte_length` totals (known
+  before any byte is read). `"auto"` keeps a running total of local tile
+  bytes for the view. If adding this layer keeps the total at or under
+  `getOption("aobview.embed_max", 32 * 2^20)` bytes, the layer is embedded
+  (`embed = TRUE`) and its temporary COG, if any, is deleted as today.
+  Otherwise, in an interactive session with httpuv installed, the layer is
+  added with `embed = FALSE` and the view becomes served, with a message
+  that names the size and says a server is now running. Over the threshold
+  without httpuv, or in a non-interactive session, the layer is embedded
+  with a warning naming the size (and httpuv when it is missing).
+- **Why 32 MiB.** Base64 makes embedded bytes a third larger, so 32 MiB of
+  tiles is about 43 MiB of page; 64 MiB would be about 85 MiB, which
+  browsers and IDE viewers load slowly. The threshold is an option, so the
+  default is easy to revisit.
+- Vectors alone never trigger serving in this milestone (their blobs are
+  already in memory; the size question for them is a later one). Remote
+  COGs are never embedded, so they never count.
+- **A served layer's temporary COG** is written to a session directory
+  (`file.path(tempdir(), "aobview-cogs")`), is not deleted when the layer is
+  added, and is handed to the server to own: it is deleted on `stop()`, and
+  in any case when R removes its temporary directory at exit. An embedded
+  layer's temporary COG is deleted at add time, as today.
+- **The view object.** An embedded view is as today: `v$file` is the page and
+  `v$server` is `NULL`. A served view has `v$server` (the handle) and
+  `v$file = NULL`; printing it opens `v$server$url` in the viewer or the
+  browser. IDE viewers accept `http://127.0.0.1` URLs, so the `in_tmp`
+  rule in `open_page()` does not apply to them.
+- **`view_add()` works on both.** On an embedded view it adds layers and
+  rewrites the page as today, unless a new layer crosses the threshold:
+  then the view becomes served as above (the page already on disk stays,
+  and the server serves the earlier layers' embedded blobs as blobs). On a
+  served view it adds layers (new local COGs with `embed = FALSE`), replaces
+  the scene on the same server, keeps the URL, and opens the page again.
+- An auto-served view leaves a server running until `v$server$stop()`,
+  `aobcore::stop_scene_servers()` or the end of the session. The message
+  that announces serving says this.
 - `max_tiles` and the plan stay as they are for a served view. Serving
   removes the cost of tile bytes, not of the plan (tile records and meshes
   still travel in the page), so the "levels left out" warning still fires
-  where it does today. Whether a served view may plan more levels is left to
-  the follow-up, and the warnings stay as noisy as they are (Michael,
-  2026-10-01).
+  where it does today. Michael's GEBCO example is a remote COG, which is
+  never embedded, so serving changes nothing for its "levels left out"
+  warning. Whether a served view may plan more levels is left to a
+  follow-up, and warnings stay as noisy as they are (Michael, 2026-10-01).
 
 ### 5. Websocket path, later
 
@@ -297,41 +399,44 @@ whether the server moves to one per session (item 4, option b).
   blob-base attribute from this one.
 - Remote servers: binding other interfaces, TLS, real authentication, and
   serving to another machine. Users on a remote R host reach the page through
-  their IDE's proxy, or they embed.
+  their IDE's proxy (with `aobcore.serve_hosts` if needed), or they embed.
 - Changing the scene spec.
 
 ## Evidence
 
 This is a design record; nothing was built for it. It is based on reading
 aobcore at `3502f60` (`R/html.R`, `R/cog.R`, `js/src/tiles.js`,
-`js/src/index.js`), aobview at `886d33e` (`R/view.R`, `R/view-terra.R`), and
-`schema/scene-0.5.schema.json` in scenespec at `9f8df26`. Not checked: whether
-httpuv's `staticPaths` honour Range, and how each IDE viewer treats a
-`127.0.0.1` URL. Both belong in the first implementation issue.
+`js/src/index.js`), aobview at `886d33e` (`R/view.R`, `R/view-terra.R`,
+`R/view-list.R`, and the tests named in the issues), and
+`schema/scene-0.5.schema.json` in scenespec at `9f8df26`. The finding that
+httpuv's `staticPaths` do not handle Range comes from the review of this
+record (httpuv `src/webapplication.cpp`). Not checked: how each IDE viewer
+and proxy treats a `127.0.0.1` URL and its `Host` header. That belongs in
+the first implementation issues.
 
 ## Consequences
 
 - **Charter and design post.** The second transport the post names, with no
   change to goals or non-goals.
 - **Dependencies.** aobcore Imports stay nanoarrow, geoarrow, wk and
-  htmltools. httpuv joins Suggests (it brings `later` and Rcpp with it when
-  installed). aobview's Imports do not change; httpuv is reached through
-  aobcore.
+  htmltools. httpuv joins Suggests; when installed it brings Rcpp, later,
+  promises and R6. aobview's Imports do not change; httpuv is reached
+  through aobcore.
 - **Scene spec.** No change. Served scenes validate as they do embedded.
 - **Renderer.** One page-loader attribute for fetching blobs by URL. The tile
   path is unchanged. Rendering changes need the headless screenshots of the
   conformance scenes, light and dark, so the served page is screenshot too,
   with the EPSG:3031 COG fixture first (polar first).
-- **Behaviour change in aobcore.** Tile bytes for embedding are read at write
-  time instead of add time. A scene object no longer carries tile blobs, so
-  `scene_blobs()` returns fewer blobs for a COG scene; anything that relied
-  on that must read them from the page or call the internal reader.
-- **Busy R stalls the page.** Requests are answered only when R is idle. If
-  that bites (for example a long computation while a view is open), the next
-  step is to serve registered files from httpuv's background thread
-  (`staticPaths` with Range, if it has it).
+- **Embedding is unchanged.** Tile bytes are still read at add time when
+  embedding, so existing pages, `scene_blobs()` and the aobview tests that
+  count tile blobs keep working for embedded views.
+- **Busy R stalls the page.** Requests are answered only when R is idle, and
+  `staticPaths` cannot help because they do not handle Range. If that bites,
+  the options are a Range-capable static handler contributed to httpuv, or
+  serving from a separate process; either needs its own record.
 - **Rules out** serving arbitrary paths, a directory listing, binding beyond
-  loopback, and absolute server URLs inside the scene document.
+  loopback, absolute server URLs inside the scene document, and serving
+  `/vsimem/` files.
 
 ### Proposed issues (not filed)
 
@@ -339,44 +444,75 @@ httpuv's `staticPaths` honour Range, and how each IDE viewer treats a
    `write_scene_html()`'s page into one internal builder that inlines the
    renderer and blobs (embed) or links them (serve).
    Done when: `write_scene_html()` output is byte-identical to today for the
-   conformance scenes; the linked mode emits `<script src="aob-renderer.min.js">`,
-   no blob scripts and a `data-aob-blob-base` attribute; tests cover both.
+   conformance scenes, blob order included; the linked mode emits
+   `<script src="aob-renderer.min.js">`, no blob scripts and a
+   `data-aob-blob-base` attribute; tests cover both.
 2. **aobcore: renderer fetches blobs by URL when the page names a blob
    base.** Done when: `fromPage()` and `render()` fetch a missing blob from
-   `<base><encoded key>`; a missing blob with no base still errors as
-   today; embedded pages are unchanged; JS tests cover both paths.
-3. **aobcore: record local files on the scene and read tile bytes at write
-   time.** Done when: `scene_add_tiled_raster()` stores the COG path in
-   `attr(scene, "files")` and no tile blobs; `write_scene_html()` reads and
-   embeds the planned ranges; the page for the polar 3031 COG fixture is the
-   same as before; the JSON contains no local path.
+   `<base>` plus `encodeURIComponent(key)`; a key with `/`, `@` and `+`
+   round-trips; a missing blob with no base still errors as today; embedded
+   pages are unchanged; JS tests cover both paths.
+3. **aobcore: register local files for serving.** `scene_add_tiled_raster(embed
+   = FALSE)` on a local COG records path, size and modification time in
+   `attr(scene, "files")`; `embed = TRUE` is unchanged.
+   Done when: with `embed = TRUE` the page for the polar 3031 COG fixture
+   is byte-identical to today, blob order included; with `embed = FALSE`
+   the scene has no tile blobs, one registered file and no local path in its
+   JSON; `write_scene_html()` on it warns and writes the `file://` URL as
+   today; a `/vsimem/` COG with `embed = FALSE` errors. aobview tests: the
+   tile-blob checks (`tile_blobs()` in `tests/testthat/helper-terra.R`,
+   line 32, and its use in `tests/testthat/test-view-terra.R`, line 89)
+   keep passing unchanged, since embedded views still carry tile blobs.
 4. **aobcore: `serve_scene()` with httpuv in Suggests.** Routes as in
-   decision 0006 item 1, loopback only, random port, 128-bit path token,
-   Host check, 404 for anything unregistered, `GET`/`HEAD` only.
+   decision 0006 item 1, loopback only, port and token without R's RNG, Host
+   check with `aobcore.serve_hosts`, the `/<token>` redirect, blob content
+   types by format, 404 for anything unregistered, `GET`/`HEAD` only,
+   `blobs` and `files` arguments for plain-list scenes.
    Done when: R CMD check passes with and without httpuv installed
-   (`skip_if_not_installed`); tests fetch every route over 127.0.0.1 with
-   base R or curl; wrong token, unknown route, `..`, `%2e%2e`, `%2f`, an
-   absolute path and a sibling file in the COG's directory all answer 404;
-   a foreign `Host` answers 403; `.Random.seed` is unchanged after a call.
-5. **aobcore: HTTP Range on registered files.** Done when: single ranges in
+   (`skip_if_not_installed`); tests fetch every route over 127.0.0.1; wrong
+   token, unknown route, `..`, `%2e%2e`, `%2f`, an absolute path and a
+   sibling file in the COG's directory all answer 404; a foreign `Host`
+   answers 403 and warns, and passes once listed in `aobcore.serve_hosts`;
+   `.Random.seed` is identical before and after a call, and absent after
+   if it was absent before; two calls after the same `set.seed()` give
+   different tokens and ports; a test forces the fallback token source
+   (through an internal option) and checks 32 hex characters, distinct
+   values across calls, the message, and an unchanged `.Random.seed`; a
+   relative cog `url` with no file and no blobs errors.
+5. **aobcore: HTTP Range on registered files.** Done when: a request with
+   no `Range` answers 200 from `body = list(file = path)`; single ranges in
    all three forms answer 206 with correct `Content-Range` and bytes; a range
-   past the end answers 416; multi-range answers 416; no `Range` answers 200;
-   `HEAD` gives the length; the per-request cap holds; the renderer's
-   `rangeReader()` draws the polar 3031 COG fixture from the served page with
-   no whole-file fetch (checked by counting response sizes), screenshot light
-   and dark.
+   past the end, a range longer than the cap and a multi-range request each
+   answer 416; `HEAD` gives the length; a file changed after registration
+   answers 409 and `serve_scene()` on it errors; the renderer's
+   `rangeReader()` draws the polar 3031 COG fixture from the served page
+   with no whole-file fetch (checked by counting response sizes),
+   screenshot light and dark.
 6. **aobcore: server lifecycle.** Done when: the handle prints its URL and
-   state; `stop()` is idempotent and frees the port; `scene_servers()` and
-   `stop_scene_servers()` work with three scenes served at once; servers stop
-   on session exit and on unloading aobcore (tested in a child R process);
-   a non-interactive call warns; owned temporary files are deleted on stop.
-7. **aobview: choose serve or embed in `view()`.** Done when: `transport`
-   and the `aobview.transport` and `aobview.embed_max` options work as in
-   decision 0006 item 4; a local COG over the threshold is served with a
-   message in an interactive session and embedded with a warning without
-   httpuv or when not interactive; a small scene still writes the same page
-   as today; a temporary COG lives until the server stops; printing a
-   served view opens its URL.
+   state; `stop()` is idempotent and frees the port; replacing the scene on
+   a running server keeps its URL; `scene_servers()` and
+   `stop_scene_servers()` work with three scenes served at once; servers
+   stop on session exit and on unloading aobcore (tested in a child R
+   process); a non-interactive call warns; owned temporary files are deleted
+   on stop.
+7. **aobview: choose serve or embed in `view()` and `view_add()`.** Done
+   when: `transport` and the `aobview.transport` and `aobview.embed_max`
+   (32 MiB) options work as in decision 0006 item 4, decided per local COG
+   from the plan's `byte_length` totals before the layer is added; a local
+   COG over the threshold is served with a message (which says a server is
+   left running) in an interactive session, and embedded with a warning
+   without httpuv or when not interactive; a small scene still writes the
+   same page as today; a served view has `v$server` and `v$file = NULL`,
+   and printing it opens the URL; `view(in_memory_raster)` works both
+   embedded (temporary COG deleted at add time) and served (temporary COG
+   kept in the session directory until stop); `view_add()` works on an
+   embedded view, on a served view (same URL), and on an embedded view that
+   crosses the threshold; a served view draws in the RStudio Server viewer
+   (checked by hand and recorded in the PR, with the `aobcore.serve_hosts`
+   value it needed, if any). aobview tests: the existing tile-blob checks
+   (`helper-terra.R` line 32, `test-view-terra.R` line 89) stay for embedded
+   views, and new tests for served views assert no tile blobs, one
+   registered file and a running server, which they stop.
 8. **design: decision 0007, websocket messages.** Done when: a record
    settles the message types, row ids versus feature ids, how selections
    reach the R user, and one server per scene or per session, sketched in
