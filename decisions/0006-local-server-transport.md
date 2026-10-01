@@ -199,8 +199,10 @@ Recommended: **a**. Concretely:
   token root, so they inherit the token without the scene knowing it.
   Embedded tile blobs in the same scene are served as blobs, so one scene
   may mix embedded and served layers.
-- **Unchanged files only.** Size and modification time are recorded at
-  registration. `serve_scene()` errors if a registered file has changed or
+- **Unchanged files only.** Size and modification time are recorded by
+  `cog_info()` when it reads the file, and `scene_add_tiled_raster()`
+  refuses a file that has changed or gone since, whether or not it embeds
+  (the registered record keeps `cog_info()`'s values). `serve_scene()` errors if a registered file has changed or
   gone since, and the file route checks again on each request: a changed
   file answers 409 and a missing one 404, each with a warning in R. A tile
   plan holds byte offsets, so a rewritten file would draw garbage otherwise.
@@ -437,8 +439,9 @@ the first implementation issues.
   promises and R6. aobview's Imports do not change; httpuv is reached
   through aobcore.
 - **Scene spec.** No change. Served scenes validate as they do embedded.
-- **Renderer.** One page-loader attribute for fetching blobs by URL. The tile
-  path is unchanged. Rendering changes need the headless screenshots of the
+- **Renderer.** One page-loader attribute for fetching blobs by URL, plus
+  the key-list script (`data-aob-blob-keys`) that tells a tiled raster which
+  tiles the server has as blobs. The tile range path is unchanged. Rendering changes need the headless screenshots of the
   conformance scenes, light and dark, so the served page is screenshot too,
   with the EPSG:3031 COG fixture first (polar first).
 - **Embedding is unchanged.** Tile bytes are still read at add time when
@@ -471,9 +474,9 @@ the first implementation issues.
    `attr(scene, "files")`; `embed = TRUE` is unchanged.
    Done when: with `embed = TRUE` the page for the polar 3031 COG fixture
    is byte-identical to today, blob order included; with `embed = FALSE`
-   the scene has no tile blobs, one registered file and no local path in its
+   the scene has no tile blobs, one registered file and no registry in its
    JSON; `write_scene_html()` on it warns and writes the `file://` URL as
-   today; a `/vsimem/` COG with `embed = FALSE` errors. aobview tests: the
+   today; a `/vsimem/` COG with `embed = FALSE` and no `url` errors. aobview tests: the
    tile-blob checks (`tile_blobs()` in `tests/testthat/helper-terra.R`,
    line 32, and its use in `tests/testthat/test-view-terra.R`, line 89)
    keep passing unchanged, since embedded views still carry tile blobs.
@@ -546,4 +549,9 @@ the first implementation issues.
     defaulted `url` is the `file://` URL, full path included, until
     `serve_scene()` replaces it in the copy it serves (item 2). The earlier
     text said "The JSON never sees the path", which was wrong for that
-    case.
+    case. Issue 3's done-when and the Consequences now say the same.
+  - Size and modification time are recorded by `cog_info()`, and
+    `scene_add_tiled_raster()` refuses a file changed since, embedded or
+    not (item 2, "Unchanged files only").
+  - The `write_scene_html()` warning names `serve_scene()` once part B
+    (issues 4 to 6) ships; until then it says to serve the page over HTTP.
