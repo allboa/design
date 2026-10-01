@@ -130,7 +130,14 @@ learns one attribute, for example `data-aob-blob-base="blob/"` on the page
 `<div>`. When a blob key has no `<script>` in the page and a base is set,
 `render()` fetches `<base><encoded key>`. Embedded pages are unchanged. A
 served layer has no tile blobs, so `tiles.js` takes its existing range
-path.
+path. A linked page also lists the keys the server delivers in one
+`<script type="application/json" data-aob-blob-keys>` (a key list, not a
+blob script), because a tile's blob key is implied by its byte range and
+the renderer cannot otherwise tell an embedded layer's tiles (served as
+blobs) from a served layer's (read by range). A tiled raster fetches a
+tile from the blob base only when its key is listed, and reads the COG
+by range otherwise; Arrow data references use the base for any blob the
+page does not carry. (Amended 2026-10-01, from aobcore#36.)
 
 Why keep `blob` keys rather than rewrite them to `url` references at serve
 time: both are valid 0.5 scenes, but keeping them means the scene document
@@ -177,8 +184,12 @@ Recommended: **a**. Concretely:
   them, do not change.
 - `scene_add_tiled_raster(embed = FALSE)` on a local COG records the file in
   an attribute of the scene (`attr(scene, "files")`, data id to a record of
-  path, size and modification time), as blobs are carried today. The JSON
-  never sees the path. `write_scene_html()` on such a scene writes the
+  path, size and modification time, and whether `url` was given
+  explicitly), as blobs are carried today. That registry is never written
+  to the scene JSON. The layer's `url` is another matter: unless the
+  caller gave one, it stays the file's `file://` URL, which holds the full
+  local path, until `serve_scene()` replaces it in the copy it serves.
+  `write_scene_html()` on such a scene writes the
   `file://` URL as today, with a warning that the page cannot read it from
   disk and needs `serve_scene()` or `embed = TRUE`.
 - `serve_scene()` sets each registered file's `url` to
@@ -195,7 +206,10 @@ Recommended: **a**. Concretely:
   plan holds byte offsets, so a rewritten file would draw garbage otherwise.
 - **`/vsimem/` COGs are embed-only.** Base R cannot read them, and a served
   file must be a real path. `scene_add_tiled_raster(embed = FALSE)` on a
-  `/vsimem/` COG is an error that says to embed it or write it to disk.
+  `/vsimem/` COG with no `url` is an error that says to embed it or write
+  it to disk. With an explicit `url` it stays allowed, as before: the plan
+  is read from memory, the renderer goes to the caller's URL, and nothing
+  is registered. (Amended 2026-10-01, from aobcore#36.)
 
 The file route:
 
@@ -517,3 +531,19 @@ the first implementation issues.
    settles the message types, row ids versus feature ids, how selections
    reach the R user, and one server per scene or per session, sketched in
    decision 0006 item 5.
+
+## Amendments
+
+- 2026-10-01, from the review of aobcore#36 (issues 1 to 3):
+  - Linked pages carry the served blob keys in a
+    `<script type="application/json" data-aob-blob-keys>`, and tiled
+    rasters fetch a tile from the blob base only for a listed key (item 1,
+    "Renderer change, not a spec change").
+  - `scene_add_tiled_raster(embed = FALSE)` on a `/vsimem/` COG with an
+    explicit `url` stays allowed and registers nothing; only the case with
+    no `url` errors (item 2).
+  - Wording: the file registry is never written to the scene JSON, but a
+    defaulted `url` is the `file://` URL, full path included, until
+    `serve_scene()` replaces it in the copy it serves (item 2). The earlier
+    text said "The JSON never sees the path", which was wrong for that
+    case.
