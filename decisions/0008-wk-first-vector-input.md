@@ -3,7 +3,7 @@
 - Date: 2026-10-01
 - Status: accepted
 - Issue: allboa/aobview#26
-- Decided by: Michael (project thread, 2026-10-01)
+- Decided by: Michael
 
 ## Question
 
@@ -29,7 +29,9 @@ Imports; `sf` is an input type, not a dependency.
   agrees with `ogr2ogr` to the bit, at similar speed and memory.
 - `terra::geom(x, wkb = TRUE)` into `wk::wkb()` is about 30 times faster
   than `sf::st_as_sf()` on terra's `lux.shp` (0.8 ms vs 23 ms per call,
-  terra 1.9.50), and needs neither sf nor geos.
+  20 calls each, terra 1.9.50, sf 1.1.3, conda-forge R 4.5), and needs
+  neither sf nor geos. The implementation, with tests, is allboa/aobview#27
+  and allboa/aobcore#50.
 - Michael: sf's round trip through lists of matrices is at odds with
   wk's internal efficiency and the Arrow premise; binary availability on
   CRAN macOS is the same for PROJ, gdalraster, terra and sf, so it is not
@@ -39,8 +41,8 @@ Imports; `sf` is an input type, not a dependency.
 
 - **Input contract.** Every vector input becomes one record: the geometry
   as wkb with its CRS (`wk_crs()`), and a plain data frame of the other
-  columns (or none). A data frame's geometry column is sf's, else the
-  first handleable column, else the one named by `geometry =`. Selections
+  columns (or none). A data frame's geometry column is the one named by
+  `geometry =`, else sf's, else the first handleable column. Selections
   return rows of the object as given (`x[rows, ]` or `x[rows]`).
 - **Engine.** PROJ in aobview Imports: `wk::wk_transform()` with
   `PROJ::proj_trans_create()`; lon/lat-ness and authority codes are read
