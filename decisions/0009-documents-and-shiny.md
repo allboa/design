@@ -142,20 +142,23 @@ Recommended: **a**.
   never serves while `shiny::isRunning()`, and `renderAobview()` of a served
   view is an error, as in a document. Large local rasters in Shiny (tiles
   over Shiny's own HTTP) are a later decision.
-- **Selections.** 0007 item 9, as sketched. The renderer takes a `channel`
-  option, the same `send()`, `onMessage()` and state the websocket channel
-  offers. The binding's channel sends each page message with
-  `Shiny.setInputValue("<outputId>_aob", message, {priority: "event"})`,
-  and answers the page's `hello` itself with R's `hello` (`select`,
+- **Selections.** 0007 item 9, with one change. The renderer takes a
+  `channel` option, the same `send()`, `onMessage()` and state the
+  websocket channel offers. The binding's channel sends each `select` with
+  `Shiny.setInputValue("<outputId>_aob_select", message, {priority:
+  "event"})` and each `view` as `<outputId>_aob_view`: two inputs, not
+  0007's one `<outputId>_aob`, since with one a `view` (sent after every
+  settled pan) would replace the latest `select` and R would lose the
+  selection. It answers the page's `hello` itself with R's `hello` (`select`,
   `serial`) from the render value: Shiny's session replaces the token,
   `Host` and `Origin` checks and the handshake. Every vector layer is
   selectable, as for a served view.
 - **In R.** `renderAobview()` keeps the rendered view (its row map,
   `v$sources`) in `session$userData` under the output id;
-  `aobview_selection(outputId, session)` and `aobview_selected(outputId,
-  session, source = NULL)` read `input$<outputId>_aob` (so they are
-  reactive) and return what `selection()` and `selected()` return for a
-  served view. A message for an older render's serial is ignored. A new
+  `aobview_selection(outputId, session)`, `aobview_selected(outputId,
+  source = NULL, session)` and `aobview_view_state(outputId, session)` read
+  those inputs (so they are reactive) and return what `selection()`,
+  `selected()` and `view_state()` return for a served view. A message for an older render's serial is ignored. A new
   render clears the selection, as a reload does.
 - R pushes nothing in this milestone (no `sendCustomMessage`); a new
   render is how R changes the page.
@@ -175,14 +178,22 @@ Read: aobcore `R/html.R`, `R/serve.R`, `js/src/index.js`, `channel.js`,
 (dependencies returned as `knit_meta`); shiny 1.14.0 exports
 (`createRenderFunction`, `isRunning`, `getDefaultReactiveDomain`).
 
+Built and checked (allboa/aobcore#54 and #55, allboa/aobview#32 and
+#33): two views in one rendered R Markdown document draw with one copy of
+the renderer, each in its own fixed theme; in a Shiny app in headless
+Chromium a click, a Shift-click and Escape reach R as
+`aobview_selected()` rows, the settled camera as `aobview_view_state()`,
+and a re-render clears the selection.
+
 ## Consequences
 
-- aobcore: `scene_tag()` exported; the renderer's theme scoping and a
-  `channel` render option (with the bundle rebuilt). Imports unchanged
+- aobcore: `scene_tag()` and `renderer_dependency()` exported; the
+  renderer's theme scoping and a `channel` render option (with the bundle rebuilt). Imports unchanged
   (htmltools is already one).
 - aobview: knitr, rmarkdown, shiny in Suggests; lazily registered
   `knit_print.aob_view`; `aobviewOutput()`, `renderAobview()`,
-  `aobview_selection()`, `aobview_selected()`; Imports unchanged.
+  `aobview_selection()`, `aobview_selected()`, `aobview_view_state()`;
+  Imports unchanged.
 - No scene spec change and no protocol change: the Shiny channel carries
   protocol 1 messages.
 - Ruled out for now: a served view inside a document or a Shiny app; data
