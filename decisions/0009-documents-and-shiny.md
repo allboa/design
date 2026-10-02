@@ -76,18 +76,33 @@ inst/renderer>, script = "aob-renderer.min.js")`.
   per-session counter with the process id and the time.
 - **Checks** are those of `write_scene_html()`, including the warning for
   a registered local COG a page on disk cannot read.
-- **Theme per view.** A fragment cannot set the host document's root
-  theme. The renderer's tokens also apply under `.aob-fragment[data-theme]`
-  (light or dark, fixed), and its theme button acts on the fragment it is
-  in rather than the root element; a fragment with theme `"auto"` follows
-  `prefers-color-scheme` as a page does. A renderer change; whole pages are
-  unchanged.
+- **Theme per view.** The renderer sets no theme and no `color-scheme` on
+  the host's root element. Its tokens are custom properties only
+  (`--aob-*`, including `--aob-scheme`), and `color-scheme` is set on the
+  renderer's own element (`.aob-root`) from `--aob-scheme`; a whole page's
+  own CSS sets its root's from the same token, so whole pages look as
+  before. The tokens also apply under `.aob-fragment[data-theme]` (light
+  or dark, fixed), and the theme button acts on the fragment it is in
+  rather than the root element; a fragment with theme `"auto"` follows
+  `prefers-color-scheme` as a page does.
+- **Keys per view.** In a fragment (or over a host's channel, item 3)
+  Escape, which clears the selection, is heard only on the view's own
+  element, and a press on the map gives that view the keyboard focus, so
+  one key press never acts on every view of a page. A whole page is one
+  view and keeps listening on the window.
+- **Late fragments.** The renderer boots the scene elements in the page
+  once the document has loaded. A fragment inserted later (Shiny's
+  `renderUI()` or `insertUI()`) ends with a one-line script calling
+  `aob.boot()`, which draws every scene element not yet drawn; a renderer
+  that loads after the fragment boots it itself. A host that inserts the
+  HTML without running its scripts calls `aob.boot()`.
 
 ### 2. knitr, R Markdown, Quarto (aobview)
 
-- `knit_print.aob_view(x, options, ...)` is registered when knitr is
-  loaded (in `.onLoad()`, and by a `packageEvent("knitr", "onLoad")` hook
-  when knitr loads later), since knitr can only be in Suggests. It returns
+- `knit_print.aob_view(x, options, ...)` is registered by R's delayed S3
+  registration, `S3method(knitr::knit_print, aob_view)` in NAMESPACE
+  (roxygen `@exportS3Method knitr::knit_print`), which takes effect when
+  knitr is loaded, since knitr can only be in Suggests. It returns
   `knitr::knit_print(aobcore::scene_tag(...))`, whose htmltools method
   passes the renderer to the document as `knit_meta`.
 - **Size.** Width is the chunk's `out.width` when it is a string, else
@@ -143,8 +158,15 @@ Recommended: **a**.
   view is an error, as in a document. Large local rasters in Shiny (tiles
   over Shiny's own HTTP) are a later decision.
 - **Selections.** 0007 item 9, with one change. The renderer takes a
-  `channel` option, the same `send()`, `onMessage()` and state the
-  websocket channel offers. The binding's channel sends each `select` with
+  `channel` option: a factory `channel(onState)` that returns `{send,
+  onMessage, close}`, the same interface as the websocket channel.
+  `send(message)` is always given a message object (never JSON text) and
+  returns whether it was sent; `onMessage(f)` returns a function that
+  removes `f`. The channel reports its state through `onState`: `"open"`
+  (never synchronously, from inside `channel()`), `"closed"` or
+  `"refused"`. `serial` is a render option, 0 when not given. A `reload`
+  over a channel is ignored (it would reload the whole app). The binding's
+  channel sends each `select` with
   `Shiny.setInputValue("<outputId>_aob_select", message, {priority:
   "event"})` and each `view` as `<outputId>_aob_view`: two inputs, not
   0007's one `<outputId>_aob`, since with one a `view` (sent after every
@@ -154,12 +176,17 @@ Recommended: **a**.
   `Host` and `Origin` checks and the handshake. Every vector layer is
   selectable, as for a served view.
 - **In R.** `renderAobview()` keeps the rendered view (its row map,
-  `v$sources`) in `session$userData` under the output id;
+  `v$sources`) and the serial of the render in a reactive value per
+  output, under the output's full id (`session$ns(outputId)`, so modules
+  work), so readers re-run when the output renders again; the serial
+  counts every render, `NULL` ones too.
   `aobview_selection(outputId, session)`, `aobview_selected(outputId,
   source = NULL, session)` and `aobview_view_state(outputId, session)` read
   those inputs (so they are reactive) and return what `selection()`,
-  `selected()` and `view_state()` return for a served view. A message for an older render's serial is ignored. A new
-  render clears the selection, as a reload does.
+  `selected()` and `view_state()` return for a served view. A message for
+  an older render's serial is ignored. A new render clears the selection,
+  as a reload does. The temporary page `view()` writes is deleted on the
+  output's next render and when the session ends.
 - R pushes nothing in this milestone (no `sendCustomMessage`); a new
   render is how R changes the page.
 
