@@ -90,9 +90,12 @@ inst/renderer>, script = "aob-renderer.min.js")`.
   when knitr loads later), since knitr can only be in Suggests. It returns
   `knitr::knit_print(aobcore::scene_tag(...))`, whose htmltools method
   passes the renderer to the document as `knit_meta`.
-- **Size.** Width is the chunk's `out.width` when given, else `"100%"`;
-  height is `out.height` when given, else `fig.height` times 96 pixels
-  (480 px for knitr's default of 5 inches), as htmlwidgets does.
+- **Size.** Width is the chunk's `out.width` when it is a string, else
+  `"100%"` (a numeric `out.width` is knitr's own, set from `fig.width`
+  when `fig.retina` is on, as in R Markdown, and would pin every view to
+  672 px); height is `out.height` when given, else `fig.height` times 96
+  pixels (480 px for R Markdown's default of 5 inches, 672 for plain
+  knitr's 7).
 - **Theme.** The view's `theme`; `view(theme = "light")` fixes a view in a
   light document whatever the reader's browser prefers.
 - **Transport.** A rendered document has no R behind it, so the served
