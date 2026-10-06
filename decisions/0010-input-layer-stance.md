@@ -145,7 +145,14 @@ order puts recipe routes that reuse the built R-planned path first.
    work and leaves the v1 non-goal "Web Mercator basemap parity" as it is.
    Scene spec: a new data reference `format` (say `tiles`) beside `cog`,
    used by `tiled_raster`. The polar test is the GIBS
-   EPSG:3031 WMTS on sidebyside page 04.
+   EPSG:3031 WMTS on sidebyside page 04. This is cheap only while the tile
+   matrix is regular. WMTS GetCapabilities can describe irregular matrix
+   sets (per-level origins, tile sizes and matrix limits), and the LIST
+   Tasmania one does, so the R planner reads the capabilities document and
+   plans from the matrix set it declares, never from the OGC default
+   (GoogleMapsCompatible or a power-of-two pyramid). XYZ templates, which
+   carry no capabilities, are the one case where the default is assumed,
+   and the spike tests both.
 2. **Chunk references as a data format.** Generalise the `cog` data
    reference `format` to a list of chunk references with a codec, so a regular-grid Zarr array, a
    Kerchunk reference set, or the output of `gdal mdim get-refs` or blocklist
@@ -157,11 +164,16 @@ order puts recipe routes that reuse the built R-planned path first.
    entry, resolved by rangefinder's source modules, drawn as a texture draped on the view's mesh (the brief's
    suggested first step). Icechunk (with the snapshot id in the recipe),
    STAC searches and starc stores arrive this way first. This needs a
-   decision on the JavaScript dependency: rangefinder loads zarrita and
-   icechunk-js lazily from a CDN, which an embedded page opened offline
-   cannot do, so bundling versus CDN loading, bundle size, pinning
-   rangefinder, and whether the source modules get their own npm publish
-   are all part of it. It also needs a decision on the
+   decision on the JavaScript dependency, and that is the real fork in the
+   road. rangefinder loads zarrita and icechunk-js lazily from a CDN, which
+   is why it has no build step; an embedded page opened offline (the
+   default transport, decision 0006, and every knitted document, 0009)
+   cannot do that. The expected answer is to bundle rangefinder's source
+   modules into aobcore's renderer, which argues for publishing them to npm
+   (as their own package or a rangefinder subpath) sooner rather than
+   later, so allonboard pins a version instead of vendoring files. CDN
+   loading stays possible for served views but is not the default. Bundle
+   size is the cost to measure. It also needs a decision on the
    CRS the browser needs: R knows the view CRS and sends it as WKT plus a
    proj4 string where one exists, with proj-wasm as the fallback, matching
    sidebyside page 07.
