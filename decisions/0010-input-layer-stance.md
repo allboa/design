@@ -22,39 +22,13 @@ sidebyside and from there to that community.
 
 ## Answer
 
-allonboard takes three primitives, after the sidebyside article, and gives
-each a layer type and a route:
-
-1. **Explicit** (coordinates are stored): vectors arrive as native GeoArrow
-   and are drawn as given. This is allonboard's own ground and stays as
-   decisions 0002, 0004 and 0008 set it.
-2. **Warp** (the image is the primitive): a grid with a CRS and a
-   geotransform is draped on a mesh in the view CRS. Values stay values; the
-   mesh carries the projection.
-3. **Cell** (the grid is the primitive): a column of cell ids plus a scheme
-   (HEALPix, S2, H3) whose geometry is computed from the ids.
-
-For warp and cell inputs, **R sends a recipe, never pixels**, and there are
-two recipe routes. allonboard keeps both and says which one each format takes:
-
-- **R-planned** (decision 0003, built): R reads the source's structure
-  through GDAL, plans the pieces the view needs and ships their byte ranges
-  with meshes already projected by PROJ. The browser fetches and decodes the
-  bytes and only draws. This stays the default whenever GDAL can describe
-  the source's pieces as plain byte ranges with a known codec.
-- **Browser-resolved** (new): R ships a small catalogue entry (source kind,
-  URL, variable, time, snapshot, CRS) and a JavaScript reader in the page
-  resolves it. allonboard does not write those readers. It adopts
-  rangefinder's source modules, which were built to be lifted out, as a
-  bundled renderer dependency. This route is for what R cannot or should not
-  plan: Icechunk snapshots, live STAC searches, time scrubbing, and sources
-  that must re-plan as the camera moves beyond any plan R made.
-
-The common currency between the routes, and between allonboard and the Zarr
-world, is the **chunk reference**: (URL, offset, length, codec, position in
-the grid). A COG tile, a Zarr chunk, a Kerchunk reference and an Icechunk
-virtual chunk are all one. allonboard's scene spec should name that
-currency rather than a format.
+allonboard takes three primitives (explicit, warp, cell): vectors stay
+GeoArrow, and for grids and cells R sends a recipe, never pixels, by the
+R-planned route of decision 0003 wherever GDAL can describe the pieces as
+byte ranges and by a new browser-resolved route through rangefinder's
+source modules for the rest. The chunk reference (URL, offset, length,
+codec) is the currency both routes share, and the order of formats to add
+is under Consequences.
 
 ## Evidence
 
@@ -97,26 +71,66 @@ bytes should stay in the bucket.
   not warp" section names exactly this split. It is the brief's open
   question "texture versus sampled raster", and allonboard has already
   chosen drape for COGs.
-- sidebyside's pages put each cloud format in a stance with a price: COG,
-  tiles and big arrays are warp and cheap; Zarr, Kerchunk and Icechunk are
-  warp and cheap, with snapshot pinning to carry; curvilinear grids reach
-  warp by cell rasterisation; HEALPix is cell, or warp by inverse sampling;
-  S2 and H3 have no renderer on either side; projected and polar CRSs are
-  warp only ([README table](https://github.com/mdsumner/sidebyside#pages)).
+- Read as a program for allonboard, sidebyside's pages put each cloud
+  format in a stance (the brief, section 5): COG, tiles and big arrays are
+  warp, with readers that exist; Zarr, Kerchunk and Icechunk are warp, with
+  snapshot pinning to carry; curvilinear grids reach warp by cell
+  rasterisation; HEALPix is cell, or warp by inverse sampling; for S2 and H3
+  the DGGS abstraction is the open work, and S2 cells have no renderer on
+  either side ([page 01](https://github.com/mdsumner/sidebyside#pages));
+  projected and polar CRSs are warp only.
 
 ### What allonboard can answer back
 
 The brief's first render-side question was whether the warp primitive can be
 drawn in a polar view inside deck.gl without its own WebGL context.
-allonboard has answered it: yes. Decisions 0001 and 0003 draw COG tiles in a
+allonboard has answered it: yes. Decision 0003 draws COG tiles in a
 deck.gl `OrthographicView` of EPSG:3031 metres, one `SimpleMeshLayer` per
-tile with a mesh in the view CRS, clean at the pole and the antimeridian.
+tile with a mesh in the view CRS, clean at the pole and the antimeridian;
+aobcore's tiled raster is built that way.
 What does not work is deck.gl-raster's tiled traversal, which is Mercator
 throughout (0003 lists the six upstream changes). The view domain (0005)
 handles how far a polar or divergent CRS may be panned. This is worth
 sending back to rangefinder and sidebyside as a finding, not a question.
 
 ## Consequences
+
+### The stance in detail
+
+allonboard takes three primitives, after the sidebyside article, and gives
+each a layer type and a route:
+
+1. **Explicit** (coordinates are stored): vectors arrive as native GeoArrow
+   and are drawn as given. This is allonboard's own ground and stays as
+   decisions 0002, 0004 and 0008 set it.
+2. **Warp** (the image is the primitive): a grid with a CRS and a
+   geotransform is draped on a mesh in the view CRS. Values stay values; the
+   mesh carries the projection.
+3. **Cell** (the grid is the primitive): a column of cell ids plus a scheme
+   (HEALPix, S2, H3) whose geometry is computed from the ids.
+
+For warp and cell inputs, **R sends a recipe, never pixels**, and there are
+two recipe routes. allonboard keeps both and says which one each format takes:
+
+- **R-planned** (decision 0003, built): R reads the source's structure
+  through GDAL, plans the pieces the view needs and ships their byte ranges
+  with meshes already projected by PROJ. The browser fetches and decodes the
+  bytes and only draws. This stays the default whenever GDAL can describe
+  the source's pieces as plain byte ranges with a known codec.
+- **Browser-resolved** (new): R ships a small catalogue entry (source kind,
+  URL, variable, time, snapshot, CRS) and a JavaScript reader in the page
+  resolves it. allonboard does not write those readers. It adopts
+  rangefinder's source modules, which were built to be lifted out, as a
+  renderer dependency (how they are shipped is item 3's decision below).
+  This route is for what R cannot or should not
+  plan: Icechunk snapshots, live STAC searches, time scrubbing, and sources
+  that must re-plan as the camera moves beyond any plan R made.
+
+The common currency between the routes, and between allonboard and the Zarr
+world, is the **chunk reference**: (URL, offset, length, codec, position in
+the grid). A COG tile, a Zarr chunk, a Kerchunk reference and an Icechunk
+virtual chunk are all one. allonboard's scene spec should name that
+currency rather than a file format.
 
 ### What to add, in order
 
@@ -127,23 +141,27 @@ order puts recipe routes that reuse the built R-planned path first.
    tile matrix with meshes in the view CRS, exactly as for COG tiles; the
    browser fetches each tile image by URL. This replaces the temporary-COG
    path for remote tile services and is the post's basemap question
-   (problem 1) answered by warping, not by vector land alone. Scene spec: a
-   `tiled_raster` source kind beside `cog`. The polar test is the GIBS
+   (problem 1) answered by warping, not by vector land alone. It is post-v1
+   work and leaves the v1 non-goal "Web Mercator basemap parity" as it is.
+   Scene spec: a new data reference `format` (say `tiles`) beside `cog`,
+   used by `tiled_raster`. The polar test is the GIBS
    EPSG:3031 WMTS on sidebyside page 04.
-2. **Chunk references as a source kind.** Generalise the `cog` source to a
-   list of chunk references with a codec, so a regular-grid Zarr array, a
+2. **Chunk references as a data format.** Generalise the `cog` data
+   reference `format` to a list of chunk references with a codec, so a regular-grid Zarr array, a
    Kerchunk reference set, or the output of `gdal mdim get-refs` or blocklist
    plans and draws like COG tiles. R reads the structure through GDAL's
    multidimensional API. The open cost is codec decoding in the browser
    (blosc, zstd and the Zarr v3 codec chain), which rangefinder already
    loads through zarrita.
 3. **A browser-resolved layer.** One layer type whose data is a catalogue
-   entry, resolved by rangefinder's source modules bundled with the
-   renderer, drawn as a texture draped on the view's mesh (the brief's
+   entry, resolved by rangefinder's source modules, drawn as a texture draped on the view's mesh (the brief's
    suggested first step). Icechunk (with the snapshot id in the recipe),
    STAC searches and starc stores arrive this way first. This needs a
-   decision on the JavaScript dependency (bundle size, pinning rangefinder,
-   and whether the source modules get their own npm publish), and on the
+   decision on the JavaScript dependency: rangefinder loads zarrita and
+   icechunk-js lazily from a CDN, which an embedded page opened offline
+   cannot do, so bundling versus CDN loading, bundle size, pinning
+   rangefinder, and whether the source modules get their own npm publish
+   are all part of it. It also needs a decision on the
    CRS the browser needs: R knows the view CRS and sends it as WKT plus a
    proj4 string where one exists, with proj-wasm as the fallback, matching
    sidebyside page 07.
@@ -165,11 +183,13 @@ order puts recipe routes that reuse the built R-planned path first.
 
 - **Charter.** The v1 target is unchanged (a polar COG with vectors). This
   record sets the order of work after v1 and widens "tiled rasters from
-  COGs" to chunked grids generally. The non-goal "a new WebGL renderer"
-  stands: everything here draws through deck.gl layers.
-- **Scene spec.** Stays renderer-neutral. It gains source kinds (`tiles`,
-  `chunks`, a catalogue entry) and later a `cells` layer, each in its own
-  scene spec version, none in this record.
+  COGs" to chunked grids generally. The non-goals "a new WebGL renderer"
+  and "Web Mercator basemap parity" stand: everything here draws through deck.gl layers.
+- **Scene spec.** Stays renderer-neutral and reader-neutral. It gains data
+  reference formats (`tiles`, `chunks`, a catalogue entry) and later a
+  `cells` layer, each in its own scene spec version, none in this record.
+  The catalogue entry is defined by the spec, not by rangefinder's internal
+  catalogue shape; rangefinder is the first reader of it, not its owner.
 - **R packages.** No new Imports. gdalraster stays in Suggests as the
   structure reader. R does not fetch pixels for cloud sources, and the
   temporary-COG paths remain for local and in-memory data only.
