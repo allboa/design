@@ -1,7 +1,7 @@
 # 0010: Where input data comes from, and what to add next
 
 - Date: 2026-10-06
-- Status: proposed
+- Status: accepted (Michael, 2026-10-06, design#21 merged as "net positive")
 - Issue: none; Michael's brief in the project thread, 2026-10-06, written up
   as [mdsumner/sidebyside `docs/allonboard-input-layer.md`](https://github.com/mdsumner/sidebyside/blob/main/docs/allonboard-input-layer.md),
   with [hypertidy/rangefinder](https://github.com/hypertidy/rangefinder) and
