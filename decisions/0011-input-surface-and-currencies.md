@@ -6,7 +6,9 @@
   2026-10-06, to the input landscape response (a project document,
   "allonboard: input landscape response")
 - Decided by: Michael (plan level: it sets the order of work ahead of
-  decision 0010's spikes and adds a scene spec contract)
+  decision 0010's spikes and adds a scene spec contract). It takes 0010 as
+  accepted: Michael called design#21 "net positive" and had it merged on
+  2026-10-06, and this record marks 0010 accepted in the same PR.
 
 ## Question
 
@@ -23,14 +25,16 @@ writes two currencies into scenespec: an Arrow stream with GeoArrow types for
 explicit data, and a chunk-reference table for grids. Three points Michael
 decided: the chunk-reference schema lives in scenespec first and moves to a
 cross-language repo only once a second producer exists; `view("string")`
-treats a character scalar as a data source, probed with gdalraster, with WKT
-text still taken as geometry; and a time axis enters the spec with 0010 item
+treats a character scalar as a data source, probed with gdalraster, while a
+character scalar that parses as WKT is taken as geometry, as a `wk::wkt()`
+vector is today; and a time axis enters the spec with 0010 item
 3 (the browser-resolved layer), not before.
 
 ## Evidence
 
 - aobview dispatches on sf, wk handleables, data frames, terra objects and
-  lists only (aobview `NAMESPACE`, `R/view.R`). It reads a
+  lists only ([aobview `NAMESPACE`](https://github.com/allboa/aobview/blob/main/NAMESPACE),
+  [`R/view.R`](https://github.com/allboa/aobview/blob/main/R/view.R)). It reads a
   `nanoarrow_array_stream` internally but offers no front door for one, so
   Arrow, DuckDB and `GDALVector$fetch()` results have no route in.
 - A remote COG-backed `SpatRaster` is already referenced by URL rather than
@@ -38,14 +42,20 @@ text still taken as geometry; and a time axis enters the spec with 0010 item
   source is read into a temporary COG (`R/view-gdal.R`), which 0010 rules
   out for cloud data.
 - Zarr and Kerchunk chunk references are arithmetic over plain JSON
-  metadata, so R can plan them with jsonlite on any GDAL, including the
-  GDAL 3.8 that CRAN's macOS binaries ship.
+  metadata, so R can plan them with jsonlite (already in aobcore Suggests)
+  on any GDAL, including the GDAL 3.8 that CRAN's macOS binaries ship.
 - The R landscape (mapview, leaflet, mapgl, rdeck, deckglgeoarrow, tmap)
   draws in Web Mercator or statically; none combines interactive GPU
   drawing, any projected CRS and cloud grids read in place. The cheapest
   way to be "best available" is to keep the data contracts identical to
   deckglgeoarrow's and lonboard's and differ only where a projected CRS
   demands it.
+- The issues this record points at: [design#22](https://github.com/allboa/design/issues/22),
+  [aobview#37](https://github.com/allboa/aobview/issues/37) to
+  [#41](https://github.com/allboa/aobview/issues/41),
+  [scenespec#9](https://github.com/allboa/scenespec/issues/9) to
+  [#11](https://github.com/allboa/scenespec/issues/11); the routes are
+  [decision 0010](0010-input-layer-stance.md).
 - Correction carried from Michael: `gdal mdim get-refs` is his parked
   draft PR to GDAL, not a shipped feature. GDAL extracts HDF5 byte
   references quickly inside the library; nothing exposes that in the CLI or
@@ -65,7 +75,8 @@ text still taken as geometry; and a time axis enters the spec with 0010 item
 4. The two currencies in scenespec: a chunk-reference data format
    (scenespec#10) and the explicit-data contract (scenespec#11), each with
    fixtures. A time axis waits for 0010 item 3 (scenespec#9).
-5. Decision 0010's items 1 to 5 as ordered there.
+5. The remainder of decision 0010's items 1 to 5, as ordered there; item 4
+   above takes the spec part of its item 2.
 
 Items 1 to 3 are agent work under the review policy in the brief. Item 4
 changes the spec and is reviewed the same way, but its shape (what a chunk
@@ -86,7 +97,8 @@ and does not block on them:
 - a `wk_trans` provider in gdalraster;
 - an R Icechunk binding;
 - non-Mercator tile traversal in deck.gl-raster (decision 0003's six
-  changes).
+  changes). The charter's upstream-contribution goal stands; it is routed
+  through Michael rather than agent PRs, since it is a post outside the org.
 
 ### What this changes and rules out
 
