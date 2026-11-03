@@ -103,3 +103,22 @@ seams show.
   0003).
 - Tiling and level of detail are out of scope here. The tiled question
   (gate A) is allboa/spikes#1, decision 0003.
+
+## Follow-up 2026-11-03: fixed upstream in deck.gl-raster 0.9.0
+
+The spike is now a repeatable probe,
+[allboa/spikes `probes/rasterlayer-3031/`](https://github.com/allboa/spikes/tree/main/probes/rasterlayer-3031)
+(PR [allboa/spikes#10](https://github.com/allboa/spikes/pull/10)), run weekly
+in CI against each deck.gl-raster version listed in its `versions.json`.
+
+- From deck.gl-raster 0.9.0 the stock `RasterLayer` draws the lon/lat COG
+  over the pole, with the antimeridian at its edge or inside it, with no
+  patch. Its `RasterReprojector` now measures error on the map, in output
+  pixels (`_errorSpace: "output"`), which is part 1 of the proposal above.
+  0.10.0-beta.2 behaves the same.
+- Part 2 is still open: `maxIterations` is not a `RasterLayer` prop, and the
+  full-resolution 3600 x 500 image stops at the cap with 0.341 px left
+  (target 0.125 px). This is not visible at the zooms tried.
+- Consequence for the core: a lon/lat source over the pole no longer needs an
+  R-side mesh when the renderer uses deck.gl-raster 0.9.0 or later. R-planned
+  meshes (decision 0003) stay the route for tiled sources.
