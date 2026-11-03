@@ -113,8 +113,11 @@ in CI against each deck.gl-raster version listed in its `versions.json`.
 
 - From deck.gl-raster 0.9.0 the stock `RasterLayer` draws the lon/lat COG
   over the pole, with the antimeridian at its edge or inside it, with no
-  patch. Its `RasterReprojector` now measures error on the map, in output
-  pixels (`_errorSpace: "output"`), which is part 1 of the proposal above.
+  patch. `RasterLayer` now builds its `RasterReprojector` with the private
+  option `_errorSpace: "output"`, so the error is measured on the map, in
+  output pixels: part 1 of the proposal above. The reprojector itself still
+  defaults to input space, and the option's underscore marks it as private,
+  so the probe is what tells us if a release changes it.
   0.10.0-beta.2 behaves the same.
 - Part 2 is still open: `maxIterations` is not a `RasterLayer` prop, and the
   full-resolution 3600 x 500 image stops at the cap with 0.341 px left

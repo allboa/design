@@ -24,7 +24,7 @@ The main reason: R-planned tiles work end to end today, for a 3031 COG and
 for a lon/lat COG over the pole and the antimeridian, with no upstream
 change, and projection stays with PROJ in R. The browser-side traversal works
 only as a prototype on private deck.gl-raster API, and for lon/lat sources
-over the pole it needs the unmerged mesh fix from decision 0001.
+over the pole it needed the mesh fix from decision 0001 (in deck.gl-raster 0.9.0, see the 0001 follow-up of 2026-11-03).
 
 ## Evidence
 
